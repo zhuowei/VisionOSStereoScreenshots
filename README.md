@@ -14,7 +14,11 @@ Disable SIP
 
 ### Metal Immersive (CompositorService) apps
 
-Add visionos_stereo_screenshots.m to your project and run.
+```
+./build.sh
+```
+
+Link against libvisionos_stereo_screenshots.dylib.
 
 ## Usage
 
