@@ -9,12 +9,20 @@
   } _interpose_##_replacee __attribute__((section("__DATA,__interpose,interposing"))) = { \
       (const void*)(unsigned long)&_replacement, (const void*)(unsigned long)&_replacee}
 
-void cp_layer_renderer_properties_set_view_texture_map_count(cp_layer_renderer_properties_t,
-                                                             size_t);
+// 6.5cm translation on x
+static simd_float4x4 gRightEyeMatrix = {
+  .columns = {
+    {1, 0, 0, 0},
+    {0, 1, 0, 0},
+    {0, 0, 1, 0},
+    {0.065, 0, 0, 1},
+  }
+};
 
 // cp_drawable_get_view
 struct cp_view {
-  char unknown[0x110];
+simd_float4x4 transform;     // 0x0
+  char unknown[0x110-0x40]; // 0x40
 };
 static_assert(sizeof(struct cp_view) == 0x110, "cp_view size is wrong");
 
@@ -89,6 +97,10 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
 #endif
     NSLog(@"visionos_stereo_screenshots starting screenshot!");
   }
+  cp_view_t leftView = cp_drawable_get_view(retval, 0);
+  cp_view_t rightView = cp_drawable_get_view(retval, 1);
+  memcpy(rightView, leftView, sizeof(*leftView));
+  rightView->transform = gRightEyeMatrix;
   return retval;
 }
 
@@ -105,8 +117,9 @@ static void hook_cp_drawable_encode_present(cp_drawable_t drawable,
 }
 
 DYLD_INTERPOSE(hook_cp_drawable_encode_present, cp_drawable_encode_present);
-#if 0
+
 static size_t hook_cp_drawable_get_view_count(cp_drawable_t drawable) {
+  return 2;
   if (false && gHookedDrawable != drawable) {
     return cp_drawable_get_view_count(drawable);
   }
@@ -117,6 +130,7 @@ static size_t hook_cp_drawable_get_view_count(cp_drawable_t drawable) {
 DYLD_INTERPOSE(hook_cp_drawable_get_view_count, cp_drawable_get_view_count);
 
 static cp_view_t hook_cp_drawable_get_view(cp_drawable_t drawable, size_t index) {
+  return cp_drawable_get_view(drawable, 0);
   if (gHookedDrawable != drawable) {
     size_t viewCount = cp_drawable_get_view_count(drawable);
     if (index >= viewCount) {
@@ -164,7 +178,7 @@ static cp_view_t hook_cp_drawable_get_view(cp_drawable_t drawable, size_t index)
 }
 
 DYLD_INTERPOSE(hook_cp_drawable_get_view, cp_drawable_get_view);
-#endif
+
 #if 0
 static size_t hook_cp_drawable_get_texture_count(cp_drawable_t drawable) {
   NSLog(@"visionos_stereo_screenshots cp_drawable_get_texture_count called RIGHT NOW");
@@ -209,7 +223,7 @@ static id<MTLTexture> hook_cp_drawable_get_depth_texture(cp_drawable_t drawable,
 
 DYLD_INTERPOSE(hook_cp_drawable_get_depth_texture, cp_drawable_get_depth_texture);
 #endif
-#if 0
+#if 1
 // we can't hook these since backboardd only reads these once at startup,
 // and setting it to 2 blanks screens the simulator
 
@@ -245,6 +259,7 @@ static cp_layer_renderer_layout hook_cp_layer_configuration_get_layout_private(c
 DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private, cp_layer_configuration_get_layout_private);
 #endif
 
+#if 0
 cp_layer_renderer_configuration_t cp_layer_configuration_copy_system_default(NSError** error);
 static cp_layer_renderer_configuration_t hook_cp_layer_configuration_copy_system_default(NSError** error) {
   cp_layer_renderer_configuration_t retval = cp_layer_configuration_copy_system_default(error);
@@ -256,6 +271,7 @@ static cp_layer_renderer_configuration_t hook_cp_layer_configuration_copy_system
 }
 
 DYLD_INTERPOSE(hook_cp_layer_configuration_copy_system_default, cp_layer_configuration_copy_system_default);
+#endif
 
 static void DumpScreenshot() {
   NSLog(@"TODO(zhuowei): DumpScreenshot");
@@ -288,6 +304,33 @@ static void hook_prepareRendererForSession_environmentLayer(RSRenderer* self, SE
   gRSRenderer = self;
   real_prepareRendererForSession_environmentLayer(self, sel, session, environmentLayer);
 }
+
+#if 0
+struct RSGetViewportsFromDrawableRet {
+  float first[4];
+  float second[4];
+};
+
+struct RSGetViewportsFromDrawableRet RSGetViewportsFromDrawable(cp_drawable_t);
+static struct RSGetViewportsFromDrawableRet hook_RSGetViewportsFromDrawable(cp_drawable_t drawable) {
+  struct RSGetViewportsFromDrawableRet retval = {.first = {0, 0, 1, 1}, .second = {0, 0, 1, 1}};
+  return retval;
+}
+DYLD_INTERPOSE(hook_RSGetViewportsFromDrawable, RSGetViewportsFromDrawable);
+#endif
+
+void RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport(float a, float b, float c, float d, void* desc, uint64_t id, int index);
+static void hook_RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport(float x, float y, float w, float h, void* desc, uint64_t id, int index) {
+  // RSGetViewportsFromDrawable divides by 0 if the screen is not foviated
+  // and it's easier to just hook it here
+  x = index == 1? 0: 0.5;
+  y = 0;
+  w = 0.5;
+  h = 0.5;
+  RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport(x, y, w, h, desc, id, index);
+}
+DYLD_INTERPOSE(hook_RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport, RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport);
+
 
 __attribute__((constructor)) static void SetupSignalHandler() {
   NSLog(@"visionos_stereo_screenshots starting!");
