@@ -69,6 +69,7 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   if (gTakeScreenshotStatus == kTakeScreenshotStatusScreenshotNextFrame) {
     gTakeScreenshotStatus = kTakeScreenshotStatusScreenshotInProgress;
     gHookedDrawable = retval;
+#if 0
     if (!gHookedExtraTexture) {
       // only make this once
       id<MTLDevice> metalDevice = MTLCreateSystemDefaultDevice();
@@ -78,6 +79,9 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
       gHookedExtraDepthTexture =
           MakeOurTextureBasedOnTheirTexture(metalDevice, originalDepthTexture);
     }
+#endif
+      id<MTLTexture> originalTexture = cp_drawable_get_color_texture(retval, 0);
+    gHookedExtraTexture = originalTexture;
 #if 0
   if (gRSRenderer) {
     *(int*)((uintptr_t)gRSRenderer + 0x50) = 2; // shared
@@ -101,7 +105,7 @@ static void hook_cp_drawable_encode_present(cp_drawable_t drawable,
 }
 
 DYLD_INTERPOSE(hook_cp_drawable_encode_present, cp_drawable_encode_present);
-
+#if 0
 static size_t hook_cp_drawable_get_view_count(cp_drawable_t drawable) {
   if (false && gHookedDrawable != drawable) {
     return cp_drawable_get_view_count(drawable);
@@ -160,7 +164,7 @@ static cp_view_t hook_cp_drawable_get_view(cp_drawable_t drawable, size_t index)
 }
 
 DYLD_INTERPOSE(hook_cp_drawable_get_view, cp_drawable_get_view);
-
+#endif
 #if 0
 static size_t hook_cp_drawable_get_texture_count(cp_drawable_t drawable) {
   NSLog(@"visionos_stereo_screenshots cp_drawable_get_texture_count called RIGHT NOW");
@@ -174,7 +178,7 @@ static size_t hook_cp_drawable_get_texture_count(cp_drawable_t drawable) {
 
 DYLD_INTERPOSE(hook_cp_drawable_get_texture_count, cp_drawable_get_texture_count);
 #endif
-
+#if 0
 static id<MTLTexture> hook_cp_drawable_get_color_texture(cp_drawable_t drawable, size_t index) {
   if (gHookedDrawable != drawable) {
     return cp_drawable_get_color_texture(drawable, index);
@@ -204,8 +208,8 @@ static id<MTLTexture> hook_cp_drawable_get_depth_texture(cp_drawable_t drawable,
 }
 
 DYLD_INTERPOSE(hook_cp_drawable_get_depth_texture, cp_drawable_get_depth_texture);
-
-#if 1
+#endif
+#if 0
 // we can't hook these since backboardd only reads these once at startup,
 // and setting it to 2 blanks screens the simulator
 
@@ -240,6 +244,18 @@ static cp_layer_renderer_layout hook_cp_layer_configuration_get_layout_private(c
 
 DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private, cp_layer_configuration_get_layout_private);
 #endif
+
+cp_layer_renderer_configuration_t cp_layer_configuration_copy_system_default(NSError** error);
+static cp_layer_renderer_configuration_t hook_cp_layer_configuration_copy_system_default(NSError** error) {
+  cp_layer_renderer_configuration_t retval = cp_layer_configuration_copy_system_default(error);
+  if (!retval) {
+    return retval;
+  }
+  cp_layer_renderer_configuration_set_layout(retval, cp_layer_renderer_layout_shared);
+  return retval;
+}
+
+DYLD_INTERPOSE(hook_cp_layer_configuration_copy_system_default, cp_layer_configuration_copy_system_default);
 
 static void DumpScreenshot() {
   NSLog(@"TODO(zhuowei): DumpScreenshot");
@@ -293,5 +309,5 @@ __attribute__((constructor)) static void SetupSignalHandler() {
   Class rsRendererClass = NSClassFromString(@"RSRenderer");
   Method origMethod = class_getInstanceMethod(rsRendererClass, @selector(prepareRendererForSession:environmentLayer:));
   real_prepareRendererForSession_environmentLayer = (void*)method_getImplementation(origMethod);
-  method_setImplementation(origMethod, (IMP)hook_prepareRendererForSession_environmentLayer);
+  //method_setImplementation(origMethod, (IMP)hook_prepareRendererForSession_environmentLayer);
 }
