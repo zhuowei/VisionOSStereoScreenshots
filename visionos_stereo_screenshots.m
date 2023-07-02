@@ -52,6 +52,7 @@ static id<MTLTexture> gHookedExtraDepthTexture = nil;
 static struct cp_view gHookedRightView;
 @class RSRenderer;
 static RSRenderer* gRSRenderer;
+static id<MTLTexture> gHookedRealTexture = nil;
 
 static void DumpScreenshot(void);
 
@@ -59,9 +60,11 @@ static id<MTLTexture> MakeOurTextureBasedOnTheirTexture(id<MTLDevice> device,
                                                         id<MTLTexture> originalTexture) {
   MTLTextureDescriptor* descriptor =
       [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:originalTexture.pixelFormat
-                                                         width:originalTexture.width*2
+                                                         width:originalTexture.width
                                                         height:originalTexture.height
                                                      mipmapped:false];
+  //descriptor.textureType = MTLTextureType2DArray;
+  //descriptor.arrayLength = 2;
   descriptor.storageMode = originalTexture.storageMode;
   return [device newTextureWithDescriptor:descriptor];
 }
@@ -73,6 +76,17 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   if (gRSRenderer) {
     *(int*)((uintptr_t)gRSRenderer + 0x50) = 3; // simulator
   }
+#endif
+#if 1
+    if (!gHookedExtraTexture) {
+      // only make this once
+      id<MTLDevice> metalDevice = MTLCreateSystemDefaultDevice();
+      id<MTLTexture> originalTexture = cp_drawable_get_color_texture(retval, 0);
+      id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(retval, 0);
+      gHookedExtraTexture = MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture);
+      gHookedExtraDepthTexture =
+          MakeOurTextureBasedOnTheirTexture(metalDevice, originalDepthTexture);
+    }
 #endif
   if (gTakeScreenshotStatus == kTakeScreenshotStatusScreenshotNextFrame) {
     gTakeScreenshotStatus = kTakeScreenshotStatusScreenshotInProgress;
@@ -88,8 +102,6 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
           MakeOurTextureBasedOnTheirTexture(metalDevice, originalDepthTexture);
     }
 #endif
-      id<MTLTexture> originalTexture = cp_drawable_get_color_texture(retval, 0);
-    gHookedExtraTexture = originalTexture;
 #if 0
   if (gRSRenderer) {
     *(int*)((uintptr_t)gRSRenderer + 0x50) = 2; // shared
@@ -101,6 +113,8 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   cp_view_t rightView = cp_drawable_get_view(retval, 1);
   memcpy(rightView, leftView, sizeof(*leftView));
   rightView->transform = gRightEyeMatrix;
+  cp_view_get_view_texture_map(rightView)->texture_index = 1;
+  gHookedRealTexture = cp_drawable_get_color_texture(retval, 0);
   return retval;
 }
 
@@ -118,7 +132,7 @@ static void hook_cp_drawable_encode_present(cp_drawable_t drawable,
 
 DYLD_INTERPOSE(hook_cp_drawable_encode_present, cp_drawable_encode_present);
 
-#if 0
+#if 1
 static size_t hook_cp_drawable_get_view_count(cp_drawable_t drawable) {
   return 2;
   if (false && gHookedDrawable != drawable) {
@@ -131,6 +145,7 @@ static size_t hook_cp_drawable_get_view_count(cp_drawable_t drawable) {
 DYLD_INTERPOSE(hook_cp_drawable_get_view_count, cp_drawable_get_view_count);
 #endif
 
+#if 0
 static cp_view_t hook_cp_drawable_get_view(cp_drawable_t drawable, size_t index) {
   return cp_drawable_get_view(drawable, 0);
   if (gHookedDrawable != drawable) {
@@ -180,6 +195,7 @@ static cp_view_t hook_cp_drawable_get_view(cp_drawable_t drawable, size_t index)
 }
 
 DYLD_INTERPOSE(hook_cp_drawable_get_view, cp_drawable_get_view);
+#endif
 
 #if 0
 static size_t hook_cp_drawable_get_texture_count(cp_drawable_t drawable) {
@@ -194,8 +210,12 @@ static size_t hook_cp_drawable_get_texture_count(cp_drawable_t drawable) {
 
 DYLD_INTERPOSE(hook_cp_drawable_get_texture_count, cp_drawable_get_texture_count);
 #endif
-#if 0
+#if 1
 static id<MTLTexture> hook_cp_drawable_get_color_texture(cp_drawable_t drawable, size_t index) {
+  if (index == 1) {
+    return gHookedExtraTexture;
+  }
+  return cp_drawable_get_color_texture(drawable, 0);
   if (gHookedDrawable != drawable) {
     return cp_drawable_get_color_texture(drawable, index);
   }
@@ -211,6 +231,10 @@ static id<MTLTexture> hook_cp_drawable_get_color_texture(cp_drawable_t drawable,
 DYLD_INTERPOSE(hook_cp_drawable_get_color_texture, cp_drawable_get_color_texture);
 
 static id<MTLTexture> hook_cp_drawable_get_depth_texture(cp_drawable_t drawable, size_t index) {
+  if (index == 1) {
+    return gHookedExtraDepthTexture;
+  }
+  return cp_drawable_get_depth_texture(drawable, 0);
   if (gHookedDrawable != drawable) {
     return cp_drawable_get_depth_texture(drawable, index);
   }
@@ -225,7 +249,7 @@ static id<MTLTexture> hook_cp_drawable_get_depth_texture(cp_drawable_t drawable,
 
 DYLD_INTERPOSE(hook_cp_drawable_get_depth_texture, cp_drawable_get_depth_texture);
 #endif
-#if 0
+#if 1
 // we can't hook these since backboardd only reads these once at startup,
 // and setting it to 2 blanks screens the simulator
 
@@ -249,13 +273,13 @@ static cp_layer_renderer_layout hook_cp_layer_configuration_get_layout_private(c
   // the public version maps those both to the standard shared/layered constants
   // (We can't use _layered because simulator doesn't support MTLTextureType2DMultisampleArray)
   // view count 2: RSRenderer renderer mode
-  // 0(dedicated)->0: not supported?
+  // 0(dedicated)->0: dedicated?
 // 1(shared)->2
 // 2(layered)->1
 // 3(layered internal)->1
 //1(shared internal)->2
   // so we aim to have RSRenderer set render mode 2 (shared)
-  return cp_layer_renderer_layout_shared;
+  return cp_layer_renderer_layout_dedicated;
 }
 
 DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private, cp_layer_configuration_get_layout_private);
@@ -279,9 +303,16 @@ static void DumpScreenshot() {
   NSLog(@"TODO(zhuowei): DumpScreenshot");
   gTakeScreenshotStatus = kTakeScreenshotStatusIdle;
   size_t textureDataSize = gHookedExtraTexture.width * gHookedExtraTexture.height * 4;
-  NSMutableData* outputData = [NSMutableData dataWithLength:textureDataSize];
-  [gHookedExtraTexture
+  NSMutableData* outputData = [NSMutableData dataWithLength:textureDataSize * 2];
+  [gHookedRealTexture
            getBytes:outputData.mutableBytes
+        bytesPerRow:gHookedRealTexture.width * 4
+      bytesPerImage:textureDataSize
+         fromRegion:MTLRegionMake2D(0, 0, gHookedRealTexture.width, gHookedRealTexture.height)
+        mipmapLevel:0
+              slice:0];
+  [gHookedExtraTexture
+           getBytes:outputData.mutableBytes + textureDataSize
         bytesPerRow:gHookedExtraTexture.width * 4
       bytesPerImage:textureDataSize
          fromRegion:MTLRegionMake2D(0, 0, gHookedExtraTexture.width, gHookedExtraTexture.height)
@@ -330,16 +361,19 @@ static void hook_RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport
   w = 0.5;
   h = 0.5;
   RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport(x, y, w, h, desc, id, index);
+
 }
 DYLD_INTERPOSE(hook_RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport, RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport);
 
+#if 1
 void RECameraViewDescriptorsComponentSetViewMode(void*, uint64_t, int);
-int hook_cameramode = 0;
+int hook_cameramode = 2;
 static void hook_RECameraViewDescriptorsComponentSetViewMode(void* camera, uint64_t descriptor, int mode) {
   RECameraViewDescriptorsComponentSetViewMode(camera, descriptor, hook_cameramode);
 }
 
 DYLD_INTERPOSE(hook_RECameraViewDescriptorsComponentSetViewMode, RECameraViewDescriptorsComponentSetViewMode);
+#endif
 
 
 __attribute__((constructor)) static void SetupSignalHandler() {
