@@ -118,6 +118,7 @@ static void hook_cp_drawable_encode_present(cp_drawable_t drawable,
 
 DYLD_INTERPOSE(hook_cp_drawable_encode_present, cp_drawable_encode_present);
 
+#if 0
 static size_t hook_cp_drawable_get_view_count(cp_drawable_t drawable) {
   return 2;
   if (false && gHookedDrawable != drawable) {
@@ -128,6 +129,7 @@ static size_t hook_cp_drawable_get_view_count(cp_drawable_t drawable) {
 }
 
 DYLD_INTERPOSE(hook_cp_drawable_get_view_count, cp_drawable_get_view_count);
+#endif
 
 static cp_view_t hook_cp_drawable_get_view(cp_drawable_t drawable, size_t index) {
   return cp_drawable_get_view(drawable, 0);
@@ -223,7 +225,7 @@ static id<MTLTexture> hook_cp_drawable_get_depth_texture(cp_drawable_t drawable,
 
 DYLD_INTERPOSE(hook_cp_drawable_get_depth_texture, cp_drawable_get_depth_texture);
 #endif
-#if 1
+#if 0
 // we can't hook these since backboardd only reads these once at startup,
 // and setting it to 2 blanks screens the simulator
 
@@ -330,6 +332,14 @@ static void hook_RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport
   RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport(x, y, w, h, desc, id, index);
 }
 DYLD_INTERPOSE(hook_RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport, RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport);
+
+void RECameraViewDescriptorsComponentSetViewMode(void*, uint64_t, int);
+int hook_cameramode = 0;
+static void hook_RECameraViewDescriptorsComponentSetViewMode(void* camera, uint64_t descriptor, int mode) {
+  RECameraViewDescriptorsComponentSetViewMode(camera, descriptor, hook_cameramode);
+}
+
+DYLD_INTERPOSE(hook_RECameraViewDescriptorsComponentSetViewMode, RECameraViewDescriptorsComponentSetViewMode);
 
 
 __attribute__((constructor)) static void SetupSignalHandler() {
