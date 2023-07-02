@@ -1,5 +1,9 @@
 Take stereoscopic (3D) screenshots in the visionOS simulator.
 
+![example screenshot](https://github.com/zhuowei/VisionOSStereoScreenshots/assets/704768/c9945210-eaf8-4a59-90da-5a0787b25598)
+
+An example screenshot from the visionOS simulator in side-by-side stereo.
+
 ## Setup
 
 ### Non-Metal Immersive apps
@@ -14,11 +18,7 @@ Disable SIP
 
 ### Metal Immersive (CompositorService) apps
 
-```
-./build.sh
-```
-
-Link against libvisionos_stereo_screenshots.dylib.
+TODO
 
 ## Usage
 
@@ -28,12 +28,8 @@ Link against libvisionos_stereo_screenshots.dylib.
 ./screenshot.sh
 ```
 
-Screenshots are saved in `/tmp/visionos_stereo_screenshots/screenshot_{time}.png`.
-
-### Metal Immersive apps
-
-Send SIGUSR1 to your app, or call visionos_stereo_screenshots_take_screenshot(@"/path/to/screenshot");
+Screenshots are saved in `/tmp/visionos_stereo_screenshot_{time}.png`.
 
 ### How it works
 
-This hooks CompositorService to add two extra output views for cp_drawable_t, which causes the app to render two extra views, one for each eye.
+This hooks CompositorService to give backboardd an extra right eye view to render.
