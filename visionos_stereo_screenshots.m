@@ -21,7 +21,8 @@ static simd_float4x4 gRightEyeMatrix = {.columns = {
 // cp_drawable_get_view
 struct cp_view {
   simd_float4x4 transform;     // 0x0
-  char unknown[0x110 - 0x40];  // 0x40
+  simd_float4 tangents;        // 0x40
+  char unknown[0x110 - 0x50];  // 0x50
 };
 static_assert(sizeof(struct cp_view) == 0x110, "cp_view size is wrong");
 
@@ -49,6 +50,14 @@ static id<MTLTexture> gHookedExtraScrapDepthTexture = nil;
 static id<MTLTexture> gHookedRealTexture = nil;
 
 static void DumpScreenshot(void);
+
+static float CalculateFovY(float fovX, float aspect) {
+  // https://cs.android.com/android/platform/superproject/+/master:external/exoplayer/tree/library/ui/src/main/java/com/google/android/exoplayer2/ui/spherical/SphericalGLSurfaceView.java;l=328;drc=2c30c028bf6b958edf635b3e4e1079e64737250a
+  float halfFovX = fovX / 2;
+  float tanY = tanf(halfFovX) / aspect;
+  float halfFovY = atanf(tanY);
+  return halfFovY * 2;
+}
 
 static id<MTLTexture> MakeOurTextureBasedOnTheirTexture(id<MTLDevice> device,
                                                         id<MTLTexture> originalTexture) {
@@ -86,6 +95,20 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   memcpy(rightView, leftView, sizeof(*leftView));
   rightView->transform = gRightEyeMatrix;
   cp_view_get_view_texture_map(rightView)->texture_index = 1;
+
+  float fovAngleHorizontal = 120 * M_PI / 180;
+  float fovAngleVertical = CalculateFovY(fovAngleHorizontal, 2732 / 2048.f);
+
+  float fovAngleLeft = -fovAngleHorizontal / 2;
+  float fovAngleRight = fovAngleHorizontal / 2;
+  float fovAngleTop = fovAngleVertical / 2;
+  float fovAngleBottom = -fovAngleVertical / 2;
+
+  // https://git.sr.ht/~sircmpwn/wxrc/tree/master/item/src/xrutil.c#L313
+  simd_float4 tangents = simd_make_float4(tanf(-fovAngleLeft), tanf(fovAngleRight),
+                                          tanf(fovAngleTop), tanf(-fovAngleBottom));
+  leftView->tangents = tangents;
+  rightView->tangents = tangents;
   return retval;
 }
 
