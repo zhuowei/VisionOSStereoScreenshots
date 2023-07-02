@@ -10,19 +10,17 @@
       (const void*)(unsigned long)&_replacement, (const void*)(unsigned long)&_replacee}
 
 // 6.5cm translation on x
-static simd_float4x4 gRightEyeMatrix = {
-  .columns = {
-    {1, 0, 0, 0},
-    {0, 1, 0, 0},
-    {0, 0, 1, 0},
-    {0.065, 0, 0, 1},
-  }
-};
+static simd_float4x4 gRightEyeMatrix = {.columns = {
+                                            {1, 0, 0, 0},
+                                            {0, 1, 0, 0},
+                                            {0, 0, 1, 0},
+                                            {0.065, 0, 0, 1},
+                                        }};
 
 // cp_drawable_get_view
 struct cp_view {
-simd_float4x4 transform;     // 0x0
-  char unknown[0x110-0x40]; // 0x40
+  simd_float4x4 transform;     // 0x0
+  char unknown[0x110 - 0x40];  // 0x40
 };
 static_assert(sizeof(struct cp_view) == 0x110, "cp_view size is wrong");
 
@@ -43,15 +41,8 @@ static int gTakeScreenshotStatus = kTakeScreenshotStatusIdle;
 // TODO(zhuowei): multiple screenshots in flight
 static cp_drawable_t gHookedDrawable;
 
-// TODO(zhuowei): backboardd ONLY supports 1 or 2 views
-static const int gHookedExtraViewCount = 1;
-static const int gHookedExtraTextureCount = 1;
 static id<MTLTexture> gHookedExtraTexture = nil;
 static id<MTLTexture> gHookedExtraDepthTexture = nil;
-// static struct cp_view gHookedLeftView;
-static struct cp_view gHookedRightView;
-@class RSRenderer;
-static RSRenderer* gRSRenderer;
 static id<MTLTexture> gHookedRealTexture = nil;
 
 static void DumpScreenshot(void);
@@ -63,8 +54,6 @@ static id<MTLTexture> MakeOurTextureBasedOnTheirTexture(id<MTLDevice> device,
                                                          width:originalTexture.width
                                                         height:originalTexture.height
                                                      mipmapped:false];
-  //descriptor.textureType = MTLTextureType2DArray;
-  //descriptor.arrayLength = 2;
   descriptor.storageMode = originalTexture.storageMode;
   return [device newTextureWithDescriptor:descriptor];
 }
@@ -72,41 +61,17 @@ static id<MTLTexture> MakeOurTextureBasedOnTheirTexture(id<MTLDevice> device,
 static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   cp_drawable_t retval = cp_frame_query_drawable(frame);
   gHookedDrawable = nil;
-#if 0
-  if (gRSRenderer) {
-    *(int*)((uintptr_t)gRSRenderer + 0x50) = 3; // simulator
+  if (!gHookedExtraTexture) {
+    // only make this once
+    id<MTLDevice> metalDevice = MTLCreateSystemDefaultDevice();
+    id<MTLTexture> originalTexture = cp_drawable_get_color_texture(retval, 0);
+    id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(retval, 0);
+    gHookedExtraTexture = MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture);
+    gHookedExtraDepthTexture = MakeOurTextureBasedOnTheirTexture(metalDevice, originalDepthTexture);
   }
-#endif
-#if 1
-    if (!gHookedExtraTexture) {
-      // only make this once
-      id<MTLDevice> metalDevice = MTLCreateSystemDefaultDevice();
-      id<MTLTexture> originalTexture = cp_drawable_get_color_texture(retval, 0);
-      id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(retval, 0);
-      gHookedExtraTexture = MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture);
-      gHookedExtraDepthTexture =
-          MakeOurTextureBasedOnTheirTexture(metalDevice, originalDepthTexture);
-    }
-#endif
   if (gTakeScreenshotStatus == kTakeScreenshotStatusScreenshotNextFrame) {
     gTakeScreenshotStatus = kTakeScreenshotStatusScreenshotInProgress;
     gHookedDrawable = retval;
-#if 0
-    if (!gHookedExtraTexture) {
-      // only make this once
-      id<MTLDevice> metalDevice = MTLCreateSystemDefaultDevice();
-      id<MTLTexture> originalTexture = cp_drawable_get_color_texture(retval, 0);
-      id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(retval, 0);
-      gHookedExtraTexture = MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture);
-      gHookedExtraDepthTexture =
-          MakeOurTextureBasedOnTheirTexture(metalDevice, originalDepthTexture);
-    }
-#endif
-#if 0
-  if (gRSRenderer) {
-    *(int*)((uintptr_t)gRSRenderer + 0x50) = 2; // shared
-  }
-#endif
     NSLog(@"visionos_stereo_screenshots starting screenshot!");
   }
   cp_view_t leftView = cp_drawable_get_view(retval, 0);
@@ -132,100 +97,19 @@ static void hook_cp_drawable_encode_present(cp_drawable_t drawable,
 
 DYLD_INTERPOSE(hook_cp_drawable_encode_present, cp_drawable_encode_present);
 
-#if 1
-static size_t hook_cp_drawable_get_view_count(cp_drawable_t drawable) {
-  return 2;
-  if (false && gHookedDrawable != drawable) {
-    return cp_drawable_get_view_count(drawable);
-  }
-  NSLog(@"visionos_stereo_screenshots calling get_view_count");
-  return cp_drawable_get_view_count(drawable) + gHookedExtraViewCount;
-}
+static size_t hook_cp_drawable_get_view_count(cp_drawable_t drawable) { return 2; }
 
 DYLD_INTERPOSE(hook_cp_drawable_get_view_count, cp_drawable_get_view_count);
-#endif
 
-#if 0
-static cp_view_t hook_cp_drawable_get_view(cp_drawable_t drawable, size_t index) {
-  return cp_drawable_get_view(drawable, 0);
-  if (gHookedDrawable != drawable) {
-    size_t viewCount = cp_drawable_get_view_count(drawable);
-    if (index >= viewCount) {
-      index = viewCount;
-    }
-    return cp_drawable_get_view(drawable, index);
-  }
-  NSLog(@"visionos_stereo_screenshots calling get_view %zu", index);
-  size_t viewCount = cp_drawable_get_view_count(drawable);
-  if (index < viewCount) {
-    return cp_drawable_get_view(drawable, index);
-  }
-  cp_view_t baseView = cp_drawable_get_view(drawable, 0);
-  cp_view_t secondViewMaybe = cp_drawable_get_view(drawable, 1);
-  if ((uintptr_t)secondViewMaybe - (uintptr_t)baseView != sizeof(struct cp_view)) {
-    NSLog(@"visionos_stereo_screenshots view size is wrong!");
-    abort();
-  }
-  size_t textureCount = cp_drawable_get_texture_count(drawable);
-  if (index == viewCount) {
-    // Right eye is original with our texture
-    // TODO(zhuowei): set the texture to point to ours
-    cp_view_t view = &gHookedRightView;
-    memcpy(view, baseView, sizeof(*view));
-#if 0
-    cp_view_texture_map_t textureMap = cp_view_get_view_texture_map(view);
-    textureMap->texture_index = textureCount;
-    if (cp_view_texture_map_get_texture_index(textureMap) != textureCount) {
-      NSLog(@"visionos_stereo_screenshots texture_index offset is wrong!");
-      abort();
-    }
-    NSLog(@"visionos_stereo_screenshots get right view! %zu %zu", textureCount,
-          cp_view_texture_map_get_texture_index(textureMap));
-#endif
-    return view;
-  }
-
-#if 0
-  if (index == viewCount + 1) {
-    // TODO(zhuowei): good luck
-    return &gHookedRightView;
-  }
-#endif
-  return cp_drawable_get_view(drawable, index);
-}
-
-DYLD_INTERPOSE(hook_cp_drawable_get_view, cp_drawable_get_view);
-#endif
-
-#if 0
-static size_t hook_cp_drawable_get_texture_count(cp_drawable_t drawable) {
-  NSLog(@"visionos_stereo_screenshots cp_drawable_get_texture_count called RIGHT NOW");
-  size_t retval = cp_drawable_get_texture_count(drawable);
-  if (gHookedDrawable != drawable) {
-    return retval;
-  }
-  NSLog(@"visionos_stereo_screenshots cp_drawable_get_texture_count called: orig %zu", retval);
-  return retval + gHookedExtraTextureCount;
-}
+static size_t hook_cp_drawable_get_texture_count(cp_drawable_t drawable) { return 2; }
 
 DYLD_INTERPOSE(hook_cp_drawable_get_texture_count, cp_drawable_get_texture_count);
-#endif
-#if 1
+
 static id<MTLTexture> hook_cp_drawable_get_color_texture(cp_drawable_t drawable, size_t index) {
   if (index == 1) {
     return gHookedExtraTexture;
   }
   return cp_drawable_get_color_texture(drawable, 0);
-  if (gHookedDrawable != drawable) {
-    return cp_drawable_get_color_texture(drawable, index);
-  }
-  return gHookedExtraTexture;
-  size_t textureCount = cp_drawable_get_texture_count(drawable);
-  if (index == textureCount) {
-    NSLog(@"visionos_stereo_screenshots get color texture!");
-    return gHookedExtraTexture;
-  }
-  return cp_drawable_get_color_texture(drawable, index);
 }
 
 DYLD_INTERPOSE(hook_cp_drawable_get_color_texture, cp_drawable_get_color_texture);
@@ -235,69 +119,28 @@ static id<MTLTexture> hook_cp_drawable_get_depth_texture(cp_drawable_t drawable,
     return gHookedExtraDepthTexture;
   }
   return cp_drawable_get_depth_texture(drawable, 0);
-  if (gHookedDrawable != drawable) {
-    return cp_drawable_get_depth_texture(drawable, index);
-  }
-  return gHookedExtraDepthTexture;
-  size_t textureCount = cp_drawable_get_texture_count(drawable);
-  if (index == textureCount) {
-    NSLog(@"visionos_stereo_screenshots cp_drawable_get_depth_texture called");
-    return gHookedExtraDepthTexture;
-  }
-  return cp_drawable_get_depth_texture(drawable, index);
 }
 
 DYLD_INTERPOSE(hook_cp_drawable_get_depth_texture, cp_drawable_get_depth_texture);
-#endif
-#if 1
-// we can't hook these since backboardd only reads these once at startup,
-// and setting it to 2 blanks screens the simulator
 
 size_t cp_layer_properties_get_view_count(cp_layer_renderer_properties_t properties);
 
 static size_t hook_cp_layer_properties_get_view_count(cp_layer_renderer_properties_t properties) {
-  // keep -[RSRenderer prepareRendererForSession:environmentLayer:] happy
-  // view count 1: renderer mode (RSRenderer._inferredDisplayMode at 0x50) = 3 (simulator)
-    NSLog(@"visionos_stereo_screenshots get layer properties view count");
-    return 2;
+  return 2;
 }
 
 DYLD_INTERPOSE(hook_cp_layer_properties_get_view_count, cp_layer_properties_get_view_count);
 
-cp_layer_renderer_layout cp_layer_configuration_get_layout_private(cp_layer_renderer_configuration_t configuration);
+cp_layer_renderer_layout cp_layer_configuration_get_layout_private(
+    cp_layer_renderer_configuration_t configuration);
 
-static cp_layer_renderer_layout hook_cp_layer_configuration_get_layout_private(cp_layer_renderer_configuration_t configuration) {
-  // the "private" version returns two more values:
-  // 3 (layered internal)
-  // 4 (shared internal)
-  // the public version maps those both to the standard shared/layered constants
-  // (We can't use _layered because simulator doesn't support MTLTextureType2DMultisampleArray)
-  // view count 2: RSRenderer renderer mode
-  // 0(dedicated)->0: dedicated?
-// 1(shared)->2
-// 2(layered)->1
-// 3(layered internal)->1
-//1(shared internal)->2
-  // so we aim to have RSRenderer set render mode 2 (shared)
+static cp_layer_renderer_layout hook_cp_layer_configuration_get_layout_private(
+    cp_layer_renderer_configuration_t configuration) {
   return cp_layer_renderer_layout_dedicated;
 }
 
-DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private, cp_layer_configuration_get_layout_private);
-#endif
-
-#if 0
-cp_layer_renderer_configuration_t cp_layer_configuration_copy_system_default(NSError** error);
-static cp_layer_renderer_configuration_t hook_cp_layer_configuration_copy_system_default(NSError** error) {
-  cp_layer_renderer_configuration_t retval = cp_layer_configuration_copy_system_default(error);
-  if (!retval) {
-    return retval;
-  }
-  cp_layer_renderer_configuration_set_layout(retval, cp_layer_renderer_layout_shared);
-  return retval;
-}
-
-DYLD_INTERPOSE(hook_cp_layer_configuration_copy_system_default, cp_layer_configuration_copy_system_default);
-#endif
+DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private,
+               cp_layer_configuration_get_layout_private);
 
 static void DumpScreenshot() {
   NSLog(@"TODO(zhuowei): DumpScreenshot");
@@ -328,54 +171,6 @@ static void DumpScreenshot() {
   }
 }
 
-@interface RSRenderer: NSObject
-- (void)prepareRendererForSession:(id)arg1 environmentLayer:(id)arg2;
-@end
-static void (*real_prepareRendererForSession_environmentLayer)(RSRenderer* self, SEL sel, id session, id environmentLayer);
-
-static void hook_prepareRendererForSession_environmentLayer(RSRenderer* self, SEL sel, id session, id environmentLayer) {
-  gRSRenderer = self;
-  real_prepareRendererForSession_environmentLayer(self, sel, session, environmentLayer);
-}
-
-#if 0
-struct RSGetViewportsFromDrawableRet {
-  float first[4];
-  float second[4];
-};
-
-struct RSGetViewportsFromDrawableRet RSGetViewportsFromDrawable(cp_drawable_t);
-static struct RSGetViewportsFromDrawableRet hook_RSGetViewportsFromDrawable(cp_drawable_t drawable) {
-  struct RSGetViewportsFromDrawableRet retval = {.first = {0, 0, 1, 1}, .second = {0, 0, 1, 1}};
-  return retval;
-}
-DYLD_INTERPOSE(hook_RSGetViewportsFromDrawable, RSGetViewportsFromDrawable);
-#endif
-
-void RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport(float a, float b, float c, float d, void* desc, uint64_t id, int index);
-static void hook_RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport(float x, float y, float w, float h, void* desc, uint64_t id, int index) {
-  // RSGetViewportsFromDrawable divides by 0 if the screen is not foviated
-  // and it's easier to just hook it here
-  x = index == 1? 0: 0.5;
-  y = 0;
-  w = 0.5;
-  h = 0.5;
-  RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport(x, y, w, h, desc, id, index);
-
-}
-DYLD_INTERPOSE(hook_RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport, RECameraViewDescriptorsComponentCameraViewDescriptorSetViewport);
-
-#if 1
-void RECameraViewDescriptorsComponentSetViewMode(void*, uint64_t, int);
-int hook_cameramode = 2;
-static void hook_RECameraViewDescriptorsComponentSetViewMode(void* camera, uint64_t descriptor, int mode) {
-  RECameraViewDescriptorsComponentSetViewMode(camera, descriptor, hook_cameramode);
-}
-
-DYLD_INTERPOSE(hook_RECameraViewDescriptorsComponentSetViewMode, RECameraViewDescriptorsComponentSetViewMode);
-#endif
-
-
 __attribute__((constructor)) static void SetupSignalHandler() {
   NSLog(@"visionos_stereo_screenshots starting!");
   static dispatch_queue_t signal_queue;
@@ -392,9 +187,4 @@ __attribute__((constructor)) static void SetupSignalHandler() {
   });
   signal(SIGUSR1, SIG_IGN);
   dispatch_activate(signal_source);
-  dlopen("System/Library/PrivateFrameworks/RealitySimulation.framework/RealitySimulation", RTLD_LAZY | RTLD_LOCAL);
-  Class rsRendererClass = NSClassFromString(@"RSRenderer");
-  Method origMethod = class_getInstanceMethod(rsRendererClass, @selector(prepareRendererForSession:environmentLayer:));
-  real_prepareRendererForSession_environmentLayer = (void*)method_getImplementation(origMethod);
-  //method_setImplementation(origMethod, (IMP)hook_prepareRendererForSession_environmentLayer);
 }
