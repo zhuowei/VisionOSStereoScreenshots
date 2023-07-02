@@ -1,6 +1,7 @@
 @import CompositorServices;
 @import Darwin;
 @import ObjectiveC;
+@import UniformTypeIdentifiers;
 
 #define DYLD_INTERPOSE(_replacement, _replacee)                                           \
   __attribute__((used)) static struct {                                                   \
@@ -43,6 +44,8 @@ static cp_drawable_t gHookedDrawable;
 
 static id<MTLTexture> gHookedExtraTexture = nil;
 static id<MTLTexture> gHookedExtraDepthTexture = nil;
+static id<MTLTexture> gHookedExtraScrapTexture = nil;
+static id<MTLTexture> gHookedExtraScrapDepthTexture = nil;
 static id<MTLTexture> gHookedRealTexture = nil;
 
 static void DumpScreenshot(void);
@@ -68,10 +71,14 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
     id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(retval, 0);
     gHookedExtraTexture = MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture);
     gHookedExtraDepthTexture = MakeOurTextureBasedOnTheirTexture(metalDevice, originalDepthTexture);
+    gHookedExtraScrapTexture = MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture);
+    gHookedExtraScrapDepthTexture =
+        MakeOurTextureBasedOnTheirTexture(metalDevice, originalDepthTexture);
   }
   if (gTakeScreenshotStatus == kTakeScreenshotStatusScreenshotNextFrame) {
     gTakeScreenshotStatus = kTakeScreenshotStatusScreenshotInProgress;
     gHookedDrawable = retval;
+    gHookedRealTexture = cp_drawable_get_color_texture(retval, 0);
     NSLog(@"visionos_stereo_screenshots starting screenshot!");
   }
   cp_view_t leftView = cp_drawable_get_view(retval, 0);
@@ -79,7 +86,6 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   memcpy(rightView, leftView, sizeof(*leftView));
   rightView->transform = gRightEyeMatrix;
   cp_view_get_view_texture_map(rightView)->texture_index = 1;
-  gHookedRealTexture = cp_drawable_get_color_texture(retval, 0);
   return retval;
 }
 
@@ -107,7 +113,7 @@ DYLD_INTERPOSE(hook_cp_drawable_get_texture_count, cp_drawable_get_texture_count
 
 static id<MTLTexture> hook_cp_drawable_get_color_texture(cp_drawable_t drawable, size_t index) {
   if (index == 1) {
-    return gHookedExtraTexture;
+    return drawable == gHookedDrawable ? gHookedExtraTexture : gHookedExtraScrapTexture;
   }
   return cp_drawable_get_color_texture(drawable, 0);
 }
@@ -116,7 +122,7 @@ DYLD_INTERPOSE(hook_cp_drawable_get_color_texture, cp_drawable_get_color_texture
 
 static id<MTLTexture> hook_cp_drawable_get_depth_texture(cp_drawable_t drawable, size_t index) {
   if (index == 1) {
-    return gHookedExtraDepthTexture;
+    return drawable == gHookedDrawable ? gHookedExtraDepthTexture : gHookedExtraScrapDepthTexture;
   }
   return cp_drawable_get_depth_texture(drawable, 0);
 }
@@ -143,10 +149,11 @@ DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private,
                cp_layer_configuration_get_layout_private);
 
 static void DumpScreenshot() {
-  NSLog(@"TODO(zhuowei): DumpScreenshot");
+  NSLog(@"visionos_stereo_screenshot: DumpScreenshot");
   gTakeScreenshotStatus = kTakeScreenshotStatusIdle;
+
   size_t textureDataSize = gHookedExtraTexture.width * gHookedExtraTexture.height * 4;
-  NSMutableData* outputData = [NSMutableData dataWithLength:textureDataSize * 2];
+  NSMutableData* outputData = [NSMutableData dataWithLength:textureDataSize];
   [gHookedRealTexture
            getBytes:outputData.mutableBytes
         bytesPerRow:gHookedRealTexture.width * 4
@@ -154,21 +161,64 @@ static void DumpScreenshot() {
          fromRegion:MTLRegionMake2D(0, 0, gHookedRealTexture.width, gHookedRealTexture.height)
         mipmapLevel:0
               slice:0];
+  CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+  CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)outputData);
+  CGImageRef cgImage = CGImageCreate(
+      gHookedRealTexture.width, gHookedRealTexture.height, /*bitsPerComponent=*/8,
+      /*bitsPerPixel=*/32, /*bytesPerRow=*/gHookedRealTexture.width * 4, colorSpace,
+      kCGImageByteOrder32Little | kCGImageAlphaPremultipliedFirst, provider, /*decode=*/nil,
+      /*shouldInterpolate=*/false, /*intent=*/kCGRenderingIntentDefault);
+
+  NSMutableData* outputData2 = [NSMutableData dataWithLength:textureDataSize];
   [gHookedExtraTexture
-           getBytes:outputData.mutableBytes + textureDataSize
+           getBytes:outputData2.mutableBytes
         bytesPerRow:gHookedExtraTexture.width * 4
       bytesPerImage:textureDataSize
          fromRegion:MTLRegionMake2D(0, 0, gHookedExtraTexture.width, gHookedExtraTexture.height)
         mipmapLevel:0
               slice:0];
-  NSString* filePath = @"/tmp/output.dat";
-  NSError* error;
-  [outputData writeToFile:filePath options:0 error:&error];
-  if (error) {
-    NSLog(@"visionos_stereo_screenshots failed to write screenshot to %@: %@", filePath, error);
-  } else {
+  CGDataProviderRef provider2 = CGDataProviderCreateWithCFData((__bridge CFDataRef)outputData2);
+  CGImageRef cgImage2 = CGImageCreate(
+      gHookedExtraTexture.width, gHookedExtraTexture.height, /*bitsPerComponent=*/8,
+      /*bitsPerPixel=*/32, /*bytesPerRow=*/gHookedExtraTexture.width * 4, colorSpace,
+      kCGImageByteOrder32Little | kCGImageAlphaPremultipliedFirst, provider2, /*decode=*/nil,
+      /*shouldInterpolate=*/false, /*intent=*/kCGRenderingIntentDefault);
+
+  CGContextRef cgContext = CGBitmapContextCreate(
+      nil, gHookedExtraTexture.width * 2, gHookedExtraTexture.height, /*bitsPerComponent=*/8,
+      /*bytesPerRow=*/0, colorSpace, kCGImageByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+  CGContextDrawImage(
+      cgContext, CGRectMake(0, 0, gHookedRealTexture.width, gHookedRealTexture.height), cgImage);
+  CGContextDrawImage(cgContext,
+                     CGRectMake(gHookedRealTexture.width, 0, gHookedExtraTexture.width,
+                                gHookedExtraTexture.height),
+                     cgImage2);
+  CGImageRef outputImage = CGBitmapContextCreateImage(cgContext);
+
+  NSString* filePath =
+      [NSString stringWithFormat:@"/tmp/visionos_stereo_screenshot_%ld.png", time(nil)];
+  ;
+
+  CGImageDestinationRef destination =
+      CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:filePath],
+                                      (__bridge CFStringRef)UTTypePNG.identifier, 1, nil);
+  CGImageDestinationAddImage(destination, outputImage, nil);
+  bool success = CGImageDestinationFinalize(destination);
+
+  if (success) {
     NSLog(@"visionos_stereo_screenshots wrote screenshot to %@", filePath);
+  } else {
+    NSLog(@"visionos_stereo_screenshots failed to write screenshot to %@", filePath);
   }
+
+  CFRelease(destination);
+  CFRelease(outputImage);
+  CFRelease(cgContext);
+  CFRelease(cgImage);
+  CFRelease(cgImage2);
+  CFRelease(colorSpace);
+  CFRelease(provider);
+  CFRelease(provider2);
 }
 
 __attribute__((constructor)) static void SetupSignalHandler() {
