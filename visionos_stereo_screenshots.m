@@ -148,6 +148,17 @@ static cp_layer_renderer_layout hook_cp_layer_configuration_get_layout_private(
 DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private,
                cp_layer_configuration_get_layout_private);
 
+// rf::data_flow::consumer::SyntheticEnvironmentConsumer::consumeLatestUpdate
+// cancel out the composeSyntheticEnvironment.rerendergraph call
+void* RESceneRenderGraphFileProviderArrayAdd(void* graph, void* graphFile, const char* targetName, uint32_t index);
+static void* hook_RESceneRenderGraphFileProviderArrayAdd(void* graph, void* graphFile, const char* targetName, uint32_t index) {
+  if (!strcmp(targetName, "Camera") && index == 0x7ffffffe) {
+    return nil;
+  }
+  return RESceneRenderGraphFileProviderArrayAdd(graph, graphFile, targetName, index);
+}
+DYLD_INTERPOSE(hook_RESceneRenderGraphFileProviderArrayAdd, RESceneRenderGraphFileProviderArrayAdd);
+
 static void DumpScreenshot() {
   NSLog(@"visionos_stereo_screenshot: DumpScreenshot");
   gTakeScreenshotStatus = kTakeScreenshotStatusIdle;
