@@ -81,13 +81,13 @@ static NSMutableDictionary* CreateDrawableReplacements(cp_drawable_t drawable) {
 
   MTLTextureDescriptor* yDescriptor =
       [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
-                                                         width:originalTexture.width
-                                                        height:originalTexture.height
+                                                         width:combinedColorTexture.width
+                                                        height:combinedColorTexture.height
                                                      mipmapped:false];
   MTLTextureDescriptor* uDescriptor =
       [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
-                                                         width:originalTexture.width / 2
-                                                        height:originalTexture.height / 2
+                                                         width:combinedColorTexture.width / 2
+                                                        height:combinedColorTexture.height / 2
                                                      mipmapped:false];
   replacements[@"YTexture"] = [metalDevice newTextureWithDescriptor:yDescriptor];
   replacements[@"UTexture"] = [metalDevice newTextureWithDescriptor:uDescriptor];
