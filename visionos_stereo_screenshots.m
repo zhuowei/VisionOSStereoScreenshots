@@ -204,6 +204,16 @@ static void hook_cp_drawable_encode_present(cp_drawable_t drawable,
                      destinationSlice:0
                      destinationLevel:0
                     destinationOrigin:MTLOriginMake(colorTexture0.width, 0, 0)];
+  id<MTLTexture> originalTexture = cp_drawable_get_color_texture(drawable, 0);
+  [blitCommandEncoder copyFromTexture:colorTexture0
+                          sourceSlice:0
+                          sourceLevel:0
+                         sourceOrigin:MTLOriginMake(0, 0, 0)
+                           sourceSize:MTLSizeMake(colorTexture0.width, colorTexture0.height, 1)
+                            toTexture:originalTexture
+                     destinationSlice:0
+                     destinationLevel:0
+                    destinationOrigin:MTLOriginMake(0, 0, 0)];
   [blitCommandEncoder endEncoding];
   id<MTLComputeCommandEncoder> computeCommandEncoder = [commandBuffer computeCommandEncoder];
   [computeCommandEncoder setComputePipelineState:gYUVAComputePipelineState];
