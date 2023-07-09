@@ -69,7 +69,7 @@ static NSMutableDictionary* CreateDrawableReplacements(cp_drawable_t drawable) {
   id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(drawable, 0);
   // TODO(zhuowei): pull the width and height out of the JSON
       NSDictionary<NSString*, id>* resolutionDict = gSessionProperties[@"session_settings"][@"video"][@"emulated_headset_view_resolution"][@"Absolute"];
-  int eyeWidth = ((NSNumber*)resolutionDict[@"width"]).intValue;
+  int eyeWidth = ((NSNumber*)resolutionDict[@"width"]).intValue / 2;
   int eyeHeight = ((NSNumber*)resolutionDict[@"height"][@"content"]).intValue;
   replacements[@"ColorTexture0"] =
       MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture, eyeWidth, eyeHeight);

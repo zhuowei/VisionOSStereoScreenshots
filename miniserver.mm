@@ -103,8 +103,9 @@ void CFRunLoopRun(void);
 static dispatch_queue_t gEncodingQueue;
 
 void visionos_stereo_screenshots_initialize_streaming() {
-  gEncodingQueue = dispatch_queue_create("com.worthdoingbadly.stereoscreenshots.encodingqueue",
-                                         DISPATCH_QUEUE_SERIAL);
+  gEncodingQueue = dispatch_queue_create_with_target(
+      "com.worthdoingbadly.stereoscreenshots.encodingqueue", DISPATCH_QUEUE_SERIAL,
+      dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
   int32_t ret;
   HmdDriverFactory("hello", &ret);
   DriverReadyIdle(false);
@@ -113,7 +114,8 @@ void visionos_stereo_screenshots_initialize_streaming() {
 static std::mutex gEncodingQueueMutex;
 static int gInFlightRequests;
 
-static void EncodeAndSendFrame(NSData *yuvFrame, NSData *aFrame, uint64_t width, uint64_t height, uint64_t targetTimestampNs) {
+static void EncodeAndSendFrame(NSData *yuvFrame, NSData *aFrame, uint64_t width, uint64_t height,
+                               uint64_t targetTimestampNs) {
   if (!gEncodePipelineSW) {
     gEncodePipelineSW = std::make_unique<alvr::EncodePipelineSW>(width, height);
   }
@@ -181,9 +183,7 @@ visionos_stereo_screenshots_streaming_get_head_pose() {
       .position = {gDeviceMotion.position[0], gDeviceMotion.position[1], gDeviceMotion.position[2]},
       .rotation = {gDeviceMotion.orientation.x, gDeviceMotion.orientation.y,
                    gDeviceMotion.orientation.z, gDeviceMotion.orientation.w},
-.targetTimestamp = gDeviceTargetTimestamp,
+      .targetTimestamp = gDeviceTargetTimestamp,
   };
 }
-uint64_t visionos_stereo_screenshots_streaming_get_timestamp() {
-return gDeviceTargetTimestamp;
-}
+uint64_t visionos_stereo_screenshots_streaming_get_timestamp() { return gDeviceTargetTimestamp; }
