@@ -2,11 +2,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 
 #include <Dispatch/Dispatch.h>
+#include <Foundation/Foundation.h>
 
-#include "third_party/alvr/miniserver/EncodePipelineSW.h"
 #include "third_party/alvr/alvr/server/cpp/alvr_server/bindings.h"
+#include "third_party/alvr/miniserver/EncodePipelineSW.h"
 #include "visionos_stereo_screenshots_streaming_interface.h"
 
 const unsigned char *FRAME_RENDER_VS_CSO_PTR;
@@ -87,8 +89,55 @@ void *HmdDriverFactory(const char *interface_name, int32_t *return_code);
 void CFRunLoopRun(void);
 }
 
+static dispatch_queue_t gEncodingQueue;
+
 void visionos_stereo_screenshots_initialize_streaming() {
+  gEncodingQueue = dispatch_queue_create("com.worthdoingbadly.stereoscreenshots.encodingqueue",
+                                         DISPATCH_QUEUE_SERIAL);
   int32_t ret;
   HmdDriverFactory("hello", &ret);
   DriverReadyIdle(false);
+}
+
+static std::mutex gEncodingQueueMutex;
+static int gInFlightRequests;
+
+static void EncodeAndSendFrame(NSData *yuvFrame, NSData *aFrame, uint64_t width, uint64_t height) {
+  if (!gEncodePipelineSW) {
+    gEncodePipelineSW = std::make_unique<alvr::EncodePipelineSW>(width, height);
+  }
+  auto& picture = gEncodePipelineSW->picture;
+  uint8_t* buf = (uint8_t*)yuvFrame.bytes;
+  uint64_t imageSize = width*height;
+  picture.img.plane[0] = buf;
+  picture.img.plane[1] = buf + imageSize;
+  picture.img.plane[2] = buf + imageSize + (imageSize / 4);
+ picture.img.i_stride[0] = width;
+ picture.img.i_stride[1] = width / 2;
+ picture.img.i_stride[2] = width / 2;
+  uint64_t timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+  bool idr = gNextFrameIDR;
+  gEncodePipelineSW->PushFrame(timestamp, idr);
+  if (gEncodePipelineSW->nal_size == 0) {
+return;
+}
+  ParseFrameNals(ALVR_H264, gEncodePipelineSW->nal[0].p_payload, gEncodePipelineSW->nal_size, gEncodePipelineSW->pts, idr);
+}
+
+void visionos_stereo_screenshots_submit_frame(NSData *yuvFrame, NSData *aFrame, uint64_t width,
+                                              uint64_t height) {
+  std::lock_guard lock{gEncodingQueueMutex};
+  if (gInFlightRequests > 3) {
+    NSLog(@"visionos_stereo_screenshots: Dropping frame!");
+    return;
+  }
+  dispatch_async(gEncodingQueue, ^{
+    EncodeAndSendFrame(yuvFrame, aFrame, width, height);
+    {
+      std::lock_guard lock{gEncodingQueueMutex};
+      gInFlightRequests--;
+    }
+  });
 }

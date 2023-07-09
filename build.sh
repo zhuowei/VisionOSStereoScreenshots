@@ -9,5 +9,5 @@ xcrun -sdk xrsimulator clang++ $CFLAGS -shared -o libvisionos_stereo_screenshots
 	visionos_stereo_screenshots.o miniserver.o NalParsing.o EncodePipelineSW.o \
 	third_party/x264/out_visionos/lib/libx264.a third_party/alvr/target/aarch64-apple-ios/debug/libalvr_server.a \
 	-framework Foundation -framework CoreFoundation -framework Security -framework AudioToolbox -framework Metal \
-	-Wl,-exported_symbols_list -Wl,exported_symbols.txt -Wl,-dead_strip -Wl,-x \
+	-Wl,-exported_symbols_list -Wl,exported_symbols.txt -Wl,-dead_strip \
 	2>&1|grep -v "built for iOS"

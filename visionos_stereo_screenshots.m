@@ -266,7 +266,6 @@ DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private,
                cp_layer_configuration_get_layout_private);
 
 static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements) {
-  NSLog(@"visionos_stereo_screenshot: DumpScreenshot");
   id<MTLTexture> yTexture = replacements[@"YTexture"];
   id<MTLTexture> uTexture = replacements[@"UTexture"];
   id<MTLTexture> vTexture = replacements[@"VTexture"];
@@ -285,54 +284,12 @@ static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements) {
          bytesPerRow:vTexture.width
           fromRegion:MTLRegionMake2D(0, 0, vTexture.width, vTexture.height)
          mipmapLevel:0];
-  [outputData writeToFile:@"/tmp/yuv420.bin" options:0 error:nil];
   NSMutableData* outputData2 = [NSMutableData dataWithLength:pixelCount];
   [aTexture getBytes:outputData2.mutableBytes
          bytesPerRow:aTexture.width
           fromRegion:MTLRegionMake2D(0, 0, aTexture.width, aTexture.height)
          mipmapLevel:0];
-  [outputData2 writeToFile:@"/tmp/a.bin" options:0 error:nil];
-#if 0
-  id<MTLTexture> gHookedRealTexture = replacements[@"CombinedColorTexture"];
-
-  size_t textureDataSize = gHookedRealTexture.width * gHookedRealTexture.height * 4;
-  NSMutableData* outputData = [NSMutableData dataWithLength:textureDataSize];
-  [gHookedRealTexture
-           getBytes:outputData.mutableBytes
-        bytesPerRow:gHookedRealTexture.width * 4
-      bytesPerImage:textureDataSize
-         fromRegion:MTLRegionMake2D(0, 0, gHookedRealTexture.width, gHookedRealTexture.height)
-        mipmapLevel:0
-              slice:0];
-  CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-  CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)outputData);
-  CGImageRef outputImage = CGImageCreate(
-      gHookedRealTexture.width, gHookedRealTexture.height, /*bitsPerComponent=*/8,
-      /*bitsPerPixel=*/32, /*bytesPerRow=*/gHookedRealTexture.width * 4, colorSpace,
-      kCGImageByteOrder32Little | kCGImageAlphaPremultipliedFirst, provider, /*decode=*/nil,
-      /*shouldInterpolate=*/false, /*intent=*/kCGRenderingIntentDefault);
-
-  NSString* filePath =
-      [NSString stringWithFormat:@"/tmp/visionos_stereo_screenshot_%ld.png", time(nil)];
-  ;
-
-  CGImageDestinationRef destination =
-      CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:filePath],
-                                      (__bridge CFStringRef)UTTypePNG.identifier, 1, nil);
-  CGImageDestinationAddImage(destination, outputImage, nil);
-  bool success = CGImageDestinationFinalize(destination);
-
-  if (success) {
-    NSLog(@"visionos_stereo_screenshots wrote screenshot to %@", filePath);
-  } else {
-    NSLog(@"visionos_stereo_screenshots failed to write screenshot to %@", filePath);
-  }
-
-  CFRelease(destination);
-  CFRelease(outputImage);
-  CFRelease(colorSpace);
-  CFRelease(provider);
-#endif
+  visionos_stereo_screenshots_submit_frame(outputData, outputData2, yTexture.width, yTexture.height);
 }
 
 // Streaming interface
@@ -357,20 +314,6 @@ void visionos_stereo_screenshots_streaming_did_stop() {
 
 __attribute__((constructor)) static void SetupSignalHandler() {
   NSLog(@"visionos_stereo_screenshots starting!");
-  static dispatch_queue_t signal_queue;
-  static dispatch_source_t signal_source;
-  signal_queue = dispatch_queue_create("com.worthdoingbadly.stereoscreenshots.signalqueue",
-                                       DISPATCH_QUEUE_SERIAL);
-  signal_source =
-      dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, /*mask=*/0, signal_queue);
-  dispatch_source_set_event_handler(signal_source, ^{
-    if (gTakeScreenshotStatus == kTakeScreenshotStatusIdle) {
-      gTakeScreenshotStatus = kTakeScreenshotStatusScreenshotNextFrame;
-      NSLog(@"visionos_stereo_screenshots preparing to take screenshot!");
-    }
-  });
-  signal(SIGUSR1, SIG_IGN);
-  dispatch_activate(signal_source);
   gMetalDevice = MTLCreateSystemDefaultDevice();
   NSURL* libraryPath = [[NSURL fileURLWithPath:NSProcessInfo.processInfo.environment[@"ALVR_DIR"]]
       URLByAppendingPathComponent:@"default.metallib"];
