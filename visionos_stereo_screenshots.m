@@ -69,7 +69,9 @@ static NSMutableDictionary* CreateDrawableReplacements(cp_drawable_t drawable) {
   id<MTLTexture> originalTexture = cp_drawable_get_color_texture(drawable, 0);
   id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(drawable, 0);
   // TODO(zhuowei): pull the width and height out of the JSON
-      NSDictionary<NSString*, id>* resolutionDict = gSessionProperties[@"session_settings"][@"video"][@"emulated_headset_view_resolution"][@"Absolute"];
+  NSDictionary<NSString*, id>* resolutionDict =
+      gSessionProperties[@"session_settings"][@"video"][@"emulated_headset_view_resolution"]
+                        [@"Absolute"];
   int eyeWidth = ((NSNumber*)resolutionDict[@"width"]).intValue / 2;
   int eyeHeight = ((NSNumber*)resolutionDict[@"height"][@"content"]).intValue;
   replacements[@"ColorTexture0"] =
@@ -312,8 +314,8 @@ static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements, uin
          bytesPerRow:aTexture.width
           fromRegion:MTLRegionMake2D(0, 0, aTexture.width, aTexture.height)
          mipmapLevel:0];
-  visionos_stereo_screenshots_submit_frame(outputData, outputData2, yTexture.width,
-                                           yTexture.height, timestamp);
+  visionos_stereo_screenshots_submit_frame(outputData, outputData2, yTexture.width, yTexture.height,
+                                           timestamp);
 }
 
 extern simd_float4x4 cp_drawable_get_simd_pose(cp_drawable_t drawable);
@@ -324,17 +326,19 @@ static uint64_t GetTimestampForDrawable(cp_drawable_t drawable) {
   simd_float4x4 simdPose = cp_drawable_get_simd_pose(drawable);
   size_t headPoseCount = 100;
   uint64_t timestamp = 0;
-  struct visionos_stereo_screenshots_streaming_head_pose* headPoses = malloc(headPoseCount * sizeof(struct visionos_stereo_screenshots_streaming_head_pose));
+  struct visionos_stereo_screenshots_streaming_head_pose* headPoses =
+      malloc(headPoseCount * sizeof(struct visionos_stereo_screenshots_streaming_head_pose));
   visionos_stereo_screenshots_streaming_get_head_pose_all(headPoses, &headPoseCount);
   for (int i = headPoseCount - 1; i >= 0; i--) {
-      struct visionos_stereo_screenshots_streaming_head_pose* pose = &headPoses[i];
-      simd_float4x4 newPose = RCPMatrixMakeTranslationRotation(simd_make_float4(pose->position[0], pose->position[1], pose->position[2], 0),
-          simd_make_float4(pose->rotation[0], pose->rotation[1],
-                                   pose->rotation[2], pose->rotation[3]));
-      if (simd_equal(simdPose, newPose)) {
-        timestamp = pose->targetTimestamp;
-        break;
-      }
+    struct visionos_stereo_screenshots_streaming_head_pose* pose = &headPoses[i];
+    simd_float4x4 newPose = RCPMatrixMakeTranslationRotation(
+        simd_make_float4(pose->position[0], pose->position[1], pose->position[2], 0),
+        simd_make_float4(pose->rotation[0], pose->rotation[1], pose->rotation[2],
+                         pose->rotation[3]));
+    if (simd_equal(simdPose, newPose)) {
+      timestamp = pose->targetTimestamp;
+      break;
+    }
   }
   free(headPoses);
   return timestamp;
@@ -358,7 +362,8 @@ static void hook_RSSimulatedHeadset_setHMDPose(RSSimulatedHeadset* self, SEL sel
     real_RSSimulatedHeadset_setHMDPose(self, sel, pose);
     return;
   }
-  struct visionos_stereo_screenshots_streaming_head_pose real_pose = visionos_stereo_screenshots_streaming_get_head_pose();
+  struct visionos_stereo_screenshots_streaming_head_pose real_pose =
+      visionos_stereo_screenshots_streaming_get_head_pose();
   struct RSSimulatedHeadsetHMDPose newPose = {
       .position =
           simd_make_float4(real_pose.position[0], real_pose.position[1], real_pose.position[2], 0),
@@ -368,9 +373,7 @@ static void hook_RSSimulatedHeadset_setHMDPose(RSSimulatedHeadset* self, SEL sel
   real_RSSimulatedHeadset_setHMDPose(self, sel, newPose);
 }
 
-static bool hook_RSSimulatedHeadset_headlocked(RSSimulatedHeadset* self, SEL sel) {
-  return false;
-}
+static bool hook_RSSimulatedHeadset_headlocked(RSSimulatedHeadset* self, SEL sel) { return false; }
 
 #if 0
 void RERenderFrameSettingsSetTotalTime(void* re, float time);

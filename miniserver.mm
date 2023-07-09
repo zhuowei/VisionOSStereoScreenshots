@@ -137,10 +137,12 @@ static void EncodeAndSendFrame(NSData *yuvFrame, NSData *aFrame, uint64_t width,
   if (gEncodePipelineSW->nal_size == 0) {
     return;
   }
-  const auto& encode_timestamp = gEncodePipelineSW->timestamp;
-          auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-          uint64_t composed_offset = now - encode_timestamp.cpu;
-        ReportComposed(targetTimestampNs, composed_offset);
+  const auto &encode_timestamp = gEncodePipelineSW->timestamp;
+  auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                 std::chrono::steady_clock::now().time_since_epoch())
+                 .count();
+  uint64_t composed_offset = now - encode_timestamp.cpu;
+  ReportComposed(targetTimestampNs, composed_offset);
   ParseFrameNals(ALVR_H264, gEncodePipelineSW->nal[0].p_payload, gEncodePipelineSW->nal_size,
                  targetTimestampNs, idr);
 }
@@ -183,11 +185,12 @@ visionos_stereo_screenshots_streaming_get_fov() {
   };
 }
 
-static struct visionos_stereo_screenshots_streaming_head_pose FfiPoseToInternalPose(FfiDeviceMotion const& devicePose, uint64_t targetTimestamp) {
+static struct visionos_stereo_screenshots_streaming_head_pose FfiPoseToInternalPose(
+    FfiDeviceMotion const &devicePose, uint64_t targetTimestamp) {
   return {
       .position = {devicePose.position[0], devicePose.position[1], devicePose.position[2]},
-      .rotation = {devicePose.orientation.x, devicePose.orientation.y,
-                   devicePose.orientation.z, devicePose.orientation.w},
+      .rotation = {devicePose.orientation.x, devicePose.orientation.y, devicePose.orientation.z,
+                   devicePose.orientation.w},
       .targetTimestamp = targetTimestamp,
   };
 }
@@ -198,11 +201,12 @@ visionos_stereo_screenshots_streaming_get_head_pose() {
   if (gDeviceMotions.size() == 0) {
     return {};
   }
-  const auto& motion = gDeviceMotions.back();
+  const auto &motion = gDeviceMotions.back();
   return FfiPoseToInternalPose(motion.second, motion.first);
 }
 
-void visionos_stereo_screenshots_streaming_get_head_pose_all(struct visionos_stereo_screenshots_streaming_head_pose* poseOut, size_t* poseCountOut) {
+void visionos_stereo_screenshots_streaming_get_head_pose_all(
+    struct visionos_stereo_screenshots_streaming_head_pose *poseOut, size_t *poseCountOut) {
   std::lock_guard lock{gDeviceMotionMutex};
   if (*poseCountOut < gDeviceMotions.size()) {
     abort();
