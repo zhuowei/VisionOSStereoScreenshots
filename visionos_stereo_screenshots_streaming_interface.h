@@ -36,7 +36,7 @@ struct visionos_stereo_screenshots_streaming_fov_both visionos_stereo_screenshot
     void);
 struct visionos_stereo_screenshots_streaming_head_pose
 visionos_stereo_screenshots_streaming_get_head_pose(void);
-uint64_t visionos_stereo_screenshots_streaming_get_timestamp(void);
+void visionos_stereo_screenshots_streaming_get_head_pose_all(struct visionos_stereo_screenshots_streaming_head_pose* poseOut, size_t* poseCountOut);
 
 #ifdef __cplusplus
 }

@@ -56,7 +56,8 @@ static NSDictionary<NSString*, id>* gSessionProperties;
 static NSMutableDictionary<NSNumber*, NSMutableDictionary<NSString*, id>*>* gDrawableDictionaries;
 static struct visionos_stereo_screenshots_streaming_head_pose gLatchedHeadsetPose;
 
-static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements);
+static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements, uint64_t timestamp);
+static uint64_t GetTimestampForDrawable(cp_drawable_t drawable);
 
 static id<MTLTexture> MakeOurTextureBasedOnTheirTexture(id<MTLDevice> device,
                                                         id<MTLTexture> originalTexture,
@@ -170,7 +171,6 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
       simd_make_float4(tanf(-fov.right.fovAngleLeft), tanf(fov.right.fovAngleRight),
                        tanf(fov.right.fovAngleTop), tanf(-fov.right.fovAngleBottom));
   gLatchedHeadsetPose = visionos_stereo_screenshots_streaming_get_head_pose();
-  replacements[@"Timestamp"] = [NSNumber numberWithUnsignedLongLong:gLatchedHeadsetPose.targetTimestamp];
   return retval;
 }
 
@@ -226,8 +226,9 @@ static void hook_cp_drawable_encode_present(cp_drawable_t drawable,
             dispatchThreads:MTLSizeMake(combinedColorTexture.width, combinedColorTexture.height, 1)
       threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
   [computeCommandEncoder endEncoding];
+  uint64_t timestamp = GetTimestampForDrawable(drawable);
   [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
-    DumpScreenshot(replacements);
+    DumpScreenshot(replacements, timestamp);
   }];
   return cp_drawable_encode_present(drawable, commandBuffer);
 }
@@ -287,7 +288,7 @@ static cp_layer_renderer_layout hook_cp_layer_configuration_get_layout_private(
 DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private,
                cp_layer_configuration_get_layout_private);
 
-static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements) {
+static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements, uint64_t timestamp) {
   id<MTLTexture> yTexture = replacements[@"YTexture"];
   id<MTLTexture> uTexture = replacements[@"UTexture"];
   id<MTLTexture> vTexture = replacements[@"VTexture"];
@@ -312,7 +313,31 @@ static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements) {
           fromRegion:MTLRegionMake2D(0, 0, aTexture.width, aTexture.height)
          mipmapLevel:0];
   visionos_stereo_screenshots_submit_frame(outputData, outputData2, yTexture.width,
-                                           yTexture.height, ((NSNumber*)replacements[@"Timestamp"]).unsignedLongLongValue );
+                                           yTexture.height, timestamp);
+}
+
+extern simd_float4x4 cp_drawable_get_simd_pose(cp_drawable_t drawable);
+extern simd_float4x4 RCPMatrixMakeTranslationRotation(simd_float4 position, simd_float4 rotation);
+
+static uint64_t GetTimestampForDrawable(cp_drawable_t drawable) {
+  // see ALVR's CEncoder.cpp
+  simd_float4x4 simdPose = cp_drawable_get_simd_pose(drawable);
+  size_t headPoseCount = 100;
+  uint64_t timestamp = 0;
+  struct visionos_stereo_screenshots_streaming_head_pose* headPoses = malloc(headPoseCount * sizeof(struct visionos_stereo_screenshots_streaming_head_pose));
+  visionos_stereo_screenshots_streaming_get_head_pose_all(headPoses, &headPoseCount);
+  for (int i = headPoseCount - 1; i >= 0; i--) {
+      struct visionos_stereo_screenshots_streaming_head_pose* pose = &headPoses[i];
+      simd_float4x4 newPose = RCPMatrixMakeTranslationRotation(simd_make_float4(pose->position[0], pose->position[1], pose->position[2], 0),
+          simd_make_float4(pose->rotation[0], pose->rotation[1],
+                                   pose->rotation[2], pose->rotation[3]));
+      if (simd_equal(simdPose, newPose)) {
+        timestamp = pose->targetTimestamp;
+        break;
+      }
+  }
+  free(headPoses);
+  return timestamp;
 }
 
 struct RSSimulatedHeadsetHMDPose {
@@ -322,6 +347,7 @@ struct RSSimulatedHeadsetHMDPose {
 
 @interface RSSimulatedHeadset
 - (void)setHMDPose:(struct RSSimulatedHeadsetHMDPose)pose;
+- (bool)headlocked;
 @end
 
 static void (*real_RSSimulatedHeadset_setHMDPose)(RSSimulatedHeadset* self, SEL sel,
@@ -332,7 +358,7 @@ static void hook_RSSimulatedHeadset_setHMDPose(RSSimulatedHeadset* self, SEL sel
     real_RSSimulatedHeadset_setHMDPose(self, sel, pose);
     return;
   }
-  struct visionos_stereo_screenshots_streaming_head_pose real_pose = gLatchedHeadsetPose;
+  struct visionos_stereo_screenshots_streaming_head_pose real_pose = visionos_stereo_screenshots_streaming_get_head_pose();
   struct RSSimulatedHeadsetHMDPose newPose = {
       .position =
           simd_make_float4(real_pose.position[0], real_pose.position[1], real_pose.position[2], 0),
@@ -341,6 +367,19 @@ static void hook_RSSimulatedHeadset_setHMDPose(RSSimulatedHeadset* self, SEL sel
   };
   real_RSSimulatedHeadset_setHMDPose(self, sel, newPose);
 }
+
+static bool hook_RSSimulatedHeadset_headlocked(RSSimulatedHeadset* self, SEL sel) {
+  return false;
+}
+
+#if 0
+void RERenderFrameSettingsSetTotalTime(void* re, float time);
+static void hook_RERenderFrameSettingsSetTotalTime(void* re, float time) {
+  RERenderFrameSettingsSetTotalTime(re, 1);
+}
+
+DYLD_INTERPOSE(hook_RERenderFrameSettingsSetTotalTime, RERenderFrameSettingsSetTotalTime);
+#endif
 
 // Streaming interface
 void visionos_stereo_screenshots_streaming_did_start() {
@@ -361,6 +400,30 @@ void visionos_stereo_screenshots_streaming_did_start() {
   }
   gTakeScreenshotStatus = kTakeScreenshotStatusScreenshotNextFrame;
 }
+
+#if 0
+
+@interface RSXRPose : NSObject
+- (instancetype)initWithPosition:(simd_float4)position orientation:(simd_float4)orientation;
+@end
+
+@interface RSFrameDescription: NSObject
+- (void)setHeadPose:(RSXRPose*)headPose;
+@end
+static Class rsXrPoseClass;
+static void (*real_RSFrameDescription_setHeadPose)(RSFrameDescription* self, SEL sel, RSXRPose* headPose);
+static void hook_RSFrameDescription_setHeadPose(RSFrameDescription* self, SEL sel, RSXRPose* headPose) {
+  if (gTakeScreenshotStatus != kTakeScreenshotStatusScreenshotInProgress) {
+    real_RSFrameDescription_setHeadPose(self, sel, headPose);
+    return;
+  }
+  struct visionos_stereo_screenshots_streaming_head_pose real_pose = visionos_stereo_screenshots_streaming_get_head_pose();
+  RSXRPose* newHeadPose = [[rsXrPoseClass alloc]initWithPosition: simd_make_float4(real_pose.position[0], real_pose.position[1], real_pose.position[2], 0) orientation: simd_make_float4(real_pose.rotation[0], real_pose.rotation[1],
+                                   real_pose.rotation[2], real_pose.rotation[3])];
+  real_RSFrameDescription_setHeadPose(self, sel, newHeadPose);
+}
+
+#endif
 
 void visionos_stereo_screenshots_streaming_did_stop() { gStopping = true; }
 
@@ -389,5 +452,19 @@ __attribute__((constructor)) static void SetupSignalHandler() {
     real_RSSimulatedHeadset_setHMDPose = (void*)method_getImplementation(method);
     method_setImplementation(method, (IMP)hook_RSSimulatedHeadset_setHMDPose);
   }
+  {
+    Class cls = NSClassFromString(@"RSSimulatedHeadset");
+    Method method = class_getInstanceMethod(cls, @selector(headlocked));
+    method_setImplementation(method, (IMP)hook_RSSimulatedHeadset_headlocked);
+  }
+#if 0
+  {
+    Class cls = NSClassFromString(@"RSFrameDescription");
+    Method method = class_getInstanceMethod(cls, @selector(setHeadPose:));
+    real_RSFrameDescription_setHeadPose = (void*)method_getImplementation(method);
+    method_setImplementation(method, (IMP)hook_RSFrameDescription_setHeadPose);
+  }
+  rsXrPoseClass = NSClassFromString(@"RSXRPose");
+#endif
   visionos_stereo_screenshots_initialize_streaming();
 }
