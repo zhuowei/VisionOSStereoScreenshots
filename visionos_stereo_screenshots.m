@@ -23,7 +23,8 @@ static simd_float4x4 gRightEyeMatrix = {.columns = {
 // cp_drawable_get_view
 struct cp_view {
   simd_float4x4 transform;     // 0x0
-  char unknown[0x110 - 0x40];  // 0x40
+  simd_float4 tangents;        // 0x40
+  char unknown[0x110 - 0x50];  // 0x50
 };
 static_assert(sizeof(struct cp_view) == 0x110, "cp_view size is wrong");
 
@@ -66,8 +67,10 @@ static NSMutableDictionary* CreateDrawableReplacements(cp_drawable_t drawable) {
   id<MTLTexture> originalTexture = cp_drawable_get_color_texture(drawable, 0);
   id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(drawable, 0);
   // TODO(zhuowei): pull the width and height out of the JSON
-  int eyeWidth = ((NSNumber*)gSessionProperties[@"openvr_config"][@"eye_resolution_width"]).intValue;
-  int eyeHeight = ((NSNumber*)gSessionProperties[@"openvr_config"][@"eye_resolution_width"]).intValue;
+  int eyeWidth =
+      ((NSNumber*)gSessionProperties[@"openvr_config"][@"eye_resolution_width"]).intValue;
+  int eyeHeight =
+      ((NSNumber*)gSessionProperties[@"openvr_config"][@"eye_resolution_width"]).intValue;
   replacements[@"ColorTexture0"] =
       MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture, eyeWidth, eyeHeight);
   replacements[@"ColorTexture1"] =
@@ -156,9 +159,16 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   cp_view_get_view_texture_map(rightView)->texture_index = 1;
 
   NSMutableDictionary* replacements = GetDrawableReplacements(retval);
-  if (replacements) {
-    // TODO(zhuowei): pull FoV info
+  if (!replacements) {
+    return retval;
   }
+  struct visionos_stereo_screenshots_streaming_fov_both fov =
+      visionos_stereo_screenshots_streaming_get_fov();
+  leftView->tangents = simd_make_float4(tanf(-fov.left.fovAngleLeft), tanf(fov.left.fovAngleRight),
+                                        tanf(fov.left.fovAngleTop), tanf(-fov.left.fovAngleBottom));
+  rightView->tangents =
+      simd_make_float4(tanf(-fov.right.fovAngleLeft), tanf(fov.right.fovAngleRight),
+                       tanf(fov.right.fovAngleTop), tanf(-fov.right.fovAngleBottom));
   return retval;
 }
 
@@ -289,18 +299,51 @@ static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements) {
          bytesPerRow:aTexture.width
           fromRegion:MTLRegionMake2D(0, 0, aTexture.width, aTexture.height)
          mipmapLevel:0];
-  visionos_stereo_screenshots_submit_frame(outputData, outputData2, yTexture.width, yTexture.height);
+  visionos_stereo_screenshots_submit_frame(outputData, outputData2, yTexture.width,
+                                           yTexture.height);
+}
+
+struct RSSimulatedHeadsetHMDPose {
+  simd_float4 position;
+  simd_float4 rotation;
+};
+
+@interface RSSimulatedHeadset
+- (void)setHMDPose:(struct RSSimulatedHeadsetHMDPose)pose;
+@end
+
+static void (*real_RSSimulatedHeadset_setHMDPose)(RSSimulatedHeadset* self, SEL sel,
+                                                  struct RSSimulatedHeadsetHMDPose pose);
+static void hook_RSSimulatedHeadset_setHMDPose(RSSimulatedHeadset* self, SEL sel,
+                                               struct RSSimulatedHeadsetHMDPose pose) {
+  if (gTakeScreenshotStatus != kTakeScreenshotStatusScreenshotInProgress) {
+    real_RSSimulatedHeadset_setHMDPose(self, sel, pose);
+    return;
+  }
+  struct visionos_stereo_screenshots_streaming_head_pose real_pose =
+      visionos_stereo_screenshots_streaming_get_head_pose();
+  struct RSSimulatedHeadsetHMDPose newPose = {
+      .position =
+          simd_make_float4(real_pose.position[0], real_pose.position[1], real_pose.position[2], 0),
+      .rotation = simd_make_float4(real_pose.rotation[0], real_pose.rotation[1],
+                                   real_pose.rotation[2], real_pose.rotation[3]),
+  };
+  real_RSSimulatedHeadset_setHMDPose(self, sel, newPose);
 }
 
 // Streaming interface
 void visionos_stereo_screenshots_streaming_did_start() {
   NSError* error;
-  NSData* sessionData = [NSData dataWithContentsOfFile:[NSProcessInfo.processInfo.environment[@"ALVR_DIR"] stringByAppendingPathComponent:@"session.json"] options:0 error:&error];
+  NSData* sessionData =
+      [NSData dataWithContentsOfFile:[NSProcessInfo.processInfo.environment[@"ALVR_DIR"]
+                                         stringByAppendingPathComponent:@"session.json"]
+                             options:0
+                               error:&error];
   if (error) {
     NSLog(@"visionos_stereo_screenshots failed to load session properties file: %@", error);
     return;
   }
-  gSessionProperties = [NSJSONSerialization JSONObjectWithData:sessionData options:0 error: &error];
+  gSessionProperties = [NSJSONSerialization JSONObjectWithData:sessionData options:0 error:&error];
   if (error) {
     NSLog(@"visionos_stereo_screenshots failed to load session properties: %@", error);
     return;
@@ -308,9 +351,7 @@ void visionos_stereo_screenshots_streaming_did_start() {
   gTakeScreenshotStatus = kTakeScreenshotStatusScreenshotNextFrame;
 }
 
-void visionos_stereo_screenshots_streaming_did_stop() {
-  gStopping = true;
-}
+void visionos_stereo_screenshots_streaming_did_stop() { gStopping = true; }
 
 __attribute__((constructor)) static void SetupSignalHandler() {
   NSLog(@"visionos_stereo_screenshots starting!");
@@ -330,6 +371,12 @@ __attribute__((constructor)) static void SetupSignalHandler() {
   if (!gYUVAComputePipelineState) {
     NSLog(@"visionos_stereo_screenshots: failed to load metal yuva pipeline state: %@", error);
     return;
+  }
+  {
+    Class cls = NSClassFromString(@"RSSimulatedHeadset");
+    Method method = class_getInstanceMethod(cls, @selector(setHMDPose:));
+    real_RSSimulatedHeadset_setHMDPose = (void*)method_getImplementation(method);
+    method_setImplementation(method, (IMP)hook_RSSimulatedHeadset_setHMDPose);
   }
   visionos_stereo_screenshots_initialize_streaming();
 }

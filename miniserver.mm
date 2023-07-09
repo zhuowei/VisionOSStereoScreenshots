@@ -68,17 +68,26 @@ void InitializeStreaming() { visionos_stereo_screenshots_streaming_did_start(); 
 void DeinitializeStreaming() { visionos_stereo_screenshots_streaming_did_stop(); }
 void SendVSync() {}
 void RequestIDR() { gNextFrameIDR = true; }
+static std::mutex gDeviceMotionMutex;
+static FfiDeviceMotion gDeviceMotion;
 void SetTracking(unsigned long long targetTimestampNs, float controllerPoseTimeOffsetS,
                  const FfiDeviceMotion *deviceMotions, int motionsCount,
                  const FfiHandSkeleton *leftHand, const FfiHandSkeleton *rightHand,
-                 unsigned int controllersTracked) {}
+                 unsigned int controllersTracked) {
+  std::lock_guard lock{gDeviceMotionMutex};
+  if (motionsCount == 0) {
+    return;
+  }
+  gDeviceMotion = deviceMotions[0];
+}
 void VideoErrorReportReceive() {}
 void ShutdownSteamvr() {}
 
 void SetOpenvrProperty(unsigned long long deviceID, FfiOpenvrProperty prop) {}
 
 void SetChaperone(float areaWidth, float areaHeight) {}
-void SetViewsConfig(FfiViewsConfig config) {}
+static FfiViewsConfig gViewsConfig;
+void SetViewsConfig(FfiViewsConfig config) { gViewsConfig = config; }
 void SetBattery(unsigned long long deviceID, float gauge_value, bool is_plugged) {}
 void SetButton(unsigned long long path, FfiButtonValue value) {}
 
@@ -106,24 +115,25 @@ static void EncodeAndSendFrame(NSData *yuvFrame, NSData *aFrame, uint64_t width,
   if (!gEncodePipelineSW) {
     gEncodePipelineSW = std::make_unique<alvr::EncodePipelineSW>(width, height);
   }
-  auto& picture = gEncodePipelineSW->picture;
-  uint8_t* buf = (uint8_t*)yuvFrame.bytes;
-  uint64_t imageSize = width*height;
+  auto &picture = gEncodePipelineSW->picture;
+  uint8_t *buf = (uint8_t *)yuvFrame.bytes;
+  uint64_t imageSize = width * height;
   picture.img.plane[0] = buf;
   picture.img.plane[1] = buf + imageSize;
   picture.img.plane[2] = buf + imageSize + (imageSize / 4);
- picture.img.i_stride[0] = width;
- picture.img.i_stride[1] = width / 2;
- picture.img.i_stride[2] = width / 2;
+  picture.img.i_stride[0] = width;
+  picture.img.i_stride[1] = width / 2;
+  picture.img.i_stride[2] = width / 2;
   uint64_t timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
                            std::chrono::steady_clock::now().time_since_epoch())
                            .count();
   bool idr = gNextFrameIDR;
   gEncodePipelineSW->PushFrame(timestamp, idr);
   if (gEncodePipelineSW->nal_size == 0) {
-return;
-}
-  ParseFrameNals(ALVR_H264, gEncodePipelineSW->nal[0].p_payload, gEncodePipelineSW->nal_size, gEncodePipelineSW->pts, idr);
+    return;
+  }
+  ParseFrameNals(ALVR_H264, gEncodePipelineSW->nal[0].p_payload, gEncodePipelineSW->nal_size,
+                 gEncodePipelineSW->pts, idr);
 }
 
 void visionos_stereo_screenshots_submit_frame(NSData *yuvFrame, NSData *aFrame, uint64_t width,
@@ -133,6 +143,7 @@ void visionos_stereo_screenshots_submit_frame(NSData *yuvFrame, NSData *aFrame, 
     NSLog(@"visionos_stereo_screenshots: Dropping frame!");
     return;
   }
+  gInFlightRequests++;
   dispatch_async(gEncodingQueue, ^{
     EncodeAndSendFrame(yuvFrame, aFrame, width, height);
     {
@@ -140,4 +151,35 @@ void visionos_stereo_screenshots_submit_frame(NSData *yuvFrame, NSData *aFrame, 
       gInFlightRequests--;
     }
   });
+}
+
+struct visionos_stereo_screenshots_streaming_fov_both
+visionos_stereo_screenshots_streaming_get_fov() {
+  return {
+      .left =
+          {
+              .fovAngleLeft = gViewsConfig.fov[0].left,
+              .fovAngleRight = gViewsConfig.fov[0].right,
+              .fovAngleTop = gViewsConfig.fov[0].up,
+              .fovAngleBottom = gViewsConfig.fov[0].down,
+          },
+      .right =
+          {
+              .fovAngleLeft = gViewsConfig.fov[1].left,
+              .fovAngleRight = gViewsConfig.fov[1].right,
+              .fovAngleTop = gViewsConfig.fov[1].up,
+              .fovAngleBottom = gViewsConfig.fov[1].down,
+          },
+
+  };
+}
+
+struct visionos_stereo_screenshots_streaming_head_pose
+visionos_stereo_screenshots_streaming_get_head_pose() {
+  std::lock_guard lock{gDeviceMotionMutex};
+  return {
+      .position = {gDeviceMotion.position[0], gDeviceMotion.position[1], gDeviceMotion.position[2]},
+      .rotation = {gDeviceMotion.orientation.x, gDeviceMotion.orientation.y,
+                   gDeviceMotion.orientation.z, gDeviceMotion.orientation.w},
+  };
 }
