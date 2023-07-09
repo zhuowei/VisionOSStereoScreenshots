@@ -70,6 +70,7 @@ void SendVSync() {}
 void RequestIDR() { gNextFrameIDR = true; }
 static std::mutex gDeviceMotionMutex;
 static FfiDeviceMotion gDeviceMotion;
+static uint64_t gDeviceTargetTimestamp;
 void SetTracking(unsigned long long targetTimestampNs, float controllerPoseTimeOffsetS,
                  const FfiDeviceMotion *deviceMotions, int motionsCount,
                  const FfiHandSkeleton *leftHand, const FfiHandSkeleton *rightHand,
@@ -78,6 +79,7 @@ void SetTracking(unsigned long long targetTimestampNs, float controllerPoseTimeO
   if (motionsCount == 0) {
     return;
   }
+  gDeviceTargetTimestamp = targetTimestampNs;
   gDeviceMotion = deviceMotions[0];
 }
 void VideoErrorReportReceive() {}
@@ -111,7 +113,7 @@ void visionos_stereo_screenshots_initialize_streaming() {
 static std::mutex gEncodingQueueMutex;
 static int gInFlightRequests;
 
-static void EncodeAndSendFrame(NSData *yuvFrame, NSData *aFrame, uint64_t width, uint64_t height) {
+static void EncodeAndSendFrame(NSData *yuvFrame, NSData *aFrame, uint64_t width, uint64_t height, uint64_t targetTimestampNs) {
   if (!gEncodePipelineSW) {
     gEncodePipelineSW = std::make_unique<alvr::EncodePipelineSW>(width, height);
   }
@@ -124,20 +126,18 @@ static void EncodeAndSendFrame(NSData *yuvFrame, NSData *aFrame, uint64_t width,
   picture.img.i_stride[0] = width;
   picture.img.i_stride[1] = width / 2;
   picture.img.i_stride[2] = width / 2;
-  uint64_t timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                           std::chrono::steady_clock::now().time_since_epoch())
-                           .count();
   bool idr = gNextFrameIDR;
-  gEncodePipelineSW->PushFrame(timestamp, idr);
+  gNextFrameIDR = false;
+  gEncodePipelineSW->PushFrame(targetTimestampNs, idr);
   if (gEncodePipelineSW->nal_size == 0) {
     return;
   }
   ParseFrameNals(ALVR_H264, gEncodePipelineSW->nal[0].p_payload, gEncodePipelineSW->nal_size,
-                 gEncodePipelineSW->pts, idr);
+                 targetTimestampNs, idr);
 }
 
 void visionos_stereo_screenshots_submit_frame(NSData *yuvFrame, NSData *aFrame, uint64_t width,
-                                              uint64_t height) {
+                                              uint64_t height, uint64_t timestamp) {
   std::lock_guard lock{gEncodingQueueMutex};
   if (gInFlightRequests > 3) {
     NSLog(@"visionos_stereo_screenshots: Dropping frame!");
@@ -145,7 +145,7 @@ void visionos_stereo_screenshots_submit_frame(NSData *yuvFrame, NSData *aFrame, 
   }
   gInFlightRequests++;
   dispatch_async(gEncodingQueue, ^{
-    EncodeAndSendFrame(yuvFrame, aFrame, width, height);
+    EncodeAndSendFrame(yuvFrame, aFrame, width, height, timestamp);
     {
       std::lock_guard lock{gEncodingQueueMutex};
       gInFlightRequests--;
@@ -181,5 +181,9 @@ visionos_stereo_screenshots_streaming_get_head_pose() {
       .position = {gDeviceMotion.position[0], gDeviceMotion.position[1], gDeviceMotion.position[2]},
       .rotation = {gDeviceMotion.orientation.x, gDeviceMotion.orientation.y,
                    gDeviceMotion.orientation.z, gDeviceMotion.orientation.w},
+.targetTimestamp = gDeviceTargetTimestamp,
   };
+}
+uint64_t visionos_stereo_screenshots_streaming_get_timestamp() {
+return gDeviceTargetTimestamp;
 }

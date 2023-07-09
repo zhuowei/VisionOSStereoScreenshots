@@ -54,6 +54,7 @@ static NSDictionary<NSString*, id>* gSessionProperties;
 
 // pointer to the drawable
 static NSMutableDictionary<NSNumber*, NSMutableDictionary<NSString*, id>*>* gDrawableDictionaries;
+static struct visionos_stereo_screenshots_streaming_head_pose gLatchedHeadsetPose;
 
 static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements);
 
@@ -67,10 +68,9 @@ static NSMutableDictionary* CreateDrawableReplacements(cp_drawable_t drawable) {
   id<MTLTexture> originalTexture = cp_drawable_get_color_texture(drawable, 0);
   id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(drawable, 0);
   // TODO(zhuowei): pull the width and height out of the JSON
-  int eyeWidth =
-      ((NSNumber*)gSessionProperties[@"openvr_config"][@"eye_resolution_width"]).intValue;
-  int eyeHeight =
-      ((NSNumber*)gSessionProperties[@"openvr_config"][@"eye_resolution_width"]).intValue;
+      NSDictionary<NSString*, id>* resolutionDict = gSessionProperties[@"session_settings"][@"video"][@"emulated_headset_view_resolution"][@"Absolute"];
+  int eyeWidth = ((NSNumber*)resolutionDict[@"width"]).intValue;
+  int eyeHeight = ((NSNumber*)resolutionDict[@"height"][@"content"]).intValue;
   replacements[@"ColorTexture0"] =
       MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture, eyeWidth, eyeHeight);
   replacements[@"ColorTexture1"] =
@@ -169,6 +169,8 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   rightView->tangents =
       simd_make_float4(tanf(-fov.right.fovAngleLeft), tanf(fov.right.fovAngleRight),
                        tanf(fov.right.fovAngleTop), tanf(-fov.right.fovAngleBottom));
+  gLatchedHeadsetPose = visionos_stereo_screenshots_streaming_get_head_pose();
+  replacements[@"Timestamp"] = [NSNumber numberWithUnsignedLongLong:gLatchedHeadsetPose.targetTimestamp];
   return retval;
 }
 
@@ -300,7 +302,7 @@ static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements) {
           fromRegion:MTLRegionMake2D(0, 0, aTexture.width, aTexture.height)
          mipmapLevel:0];
   visionos_stereo_screenshots_submit_frame(outputData, outputData2, yTexture.width,
-                                           yTexture.height);
+                                           yTexture.height, ((NSNumber*)replacements[@"Timestamp"]).unsignedLongLongValue );
 }
 
 struct RSSimulatedHeadsetHMDPose {
@@ -320,8 +322,7 @@ static void hook_RSSimulatedHeadset_setHMDPose(RSSimulatedHeadset* self, SEL sel
     real_RSSimulatedHeadset_setHMDPose(self, sel, pose);
     return;
   }
-  struct visionos_stereo_screenshots_streaming_head_pose real_pose =
-      visionos_stereo_screenshots_streaming_get_head_pose();
+  struct visionos_stereo_screenshots_streaming_head_pose real_pose = gLatchedHeadsetPose;
   struct RSSimulatedHeadsetHMDPose newPose = {
       .position =
           simd_make_float4(real_pose.position[0], real_pose.position[1], real_pose.position[2], 0),
