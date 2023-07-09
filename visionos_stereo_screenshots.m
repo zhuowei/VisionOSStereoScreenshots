@@ -3,6 +3,8 @@
 @import ObjectiveC;
 @import UniformTypeIdentifiers;
 
+#include "visionos_stereo_screenshots_streaming_interface.h"
+
 #define DYLD_INTERPOSE(_replacement, _replacee)                                           \
   __attribute__((used)) static struct {                                                   \
     const void* replacement;                                                              \
@@ -36,6 +38,8 @@ static const int kTakeScreenshotStatusIdle = 0;
 static const int kTakeScreenshotStatusScreenshotNextFrame = 1;
 static const int kTakeScreenshotStatusScreenshotInProgress = 2;
 
+static bool gStopping = false;
+
 // TODO(zhuowei): do I need locking for this?
 static int gTakeScreenshotStatus = kTakeScreenshotStatusIdle;
 
@@ -44,6 +48,8 @@ static id<MTLTexture> gHookedExtraScrapDepthTexture = nil;
 
 static id<MTLDevice> gMetalDevice;
 static id<MTLComputePipelineState> gYUVAComputePipelineState;
+
+static NSDictionary<NSString*, id>* gSessionProperties;
 
 // pointer to the drawable
 static NSMutableDictionary<NSNumber*, NSMutableDictionary<NSString*, id>*>* gDrawableDictionaries;
@@ -60,8 +66,8 @@ static NSMutableDictionary* CreateDrawableReplacements(cp_drawable_t drawable) {
   id<MTLTexture> originalTexture = cp_drawable_get_color_texture(drawable, 0);
   id<MTLTexture> originalDepthTexture = cp_drawable_get_depth_texture(drawable, 0);
   // TODO(zhuowei): pull the width and height out of the JSON
-  int eyeWidth = 1280;
-  int eyeHeight = 720;
+  int eyeWidth = ((NSNumber*)gSessionProperties[@"openvr_config"][@"eye_resolution_width"]).intValue;
+  int eyeHeight = ((NSNumber*)gSessionProperties[@"openvr_config"][@"eye_resolution_width"]).intValue;
   replacements[@"ColorTexture0"] =
       MakeOurTextureBasedOnTheirTexture(metalDevice, originalTexture, eyeWidth, eyeHeight);
   replacements[@"ColorTexture1"] =
@@ -124,8 +130,9 @@ static id<MTLTexture> MakeOurTextureBasedOnTheirTexture(id<MTLDevice> device,
 
 static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   cp_drawable_t retval = cp_frame_query_drawable(frame);
-  if (gTakeScreenshotStatus == kTakeScreenshotStatusScreenshotInProgress) {
+  if (gStopping) {
     gTakeScreenshotStatus = kTakeScreenshotStatusIdle;
+    gStopping = false;
   } else if (gTakeScreenshotStatus == kTakeScreenshotStatusScreenshotNextFrame) {
     gDrawableDictionaries = [NSMutableDictionary new];
     gTakeScreenshotStatus = kTakeScreenshotStatusScreenshotInProgress;
@@ -328,6 +335,26 @@ static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements) {
 #endif
 }
 
+// Streaming interface
+void visionos_stereo_screenshots_streaming_did_start() {
+  NSError* error;
+  NSData* sessionData = [NSData dataWithContentsOfFile:[NSProcessInfo.processInfo.environment[@"ALVR_DIR"] stringByAppendingPathComponent:@"session.json"] options:0 error:&error];
+  if (error) {
+    NSLog(@"visionos_stereo_screenshots failed to load session properties file: %@", error);
+    return;
+  }
+  gSessionProperties = [NSJSONSerialization JSONObjectWithData:sessionData options:0 error: &error];
+  if (error) {
+    NSLog(@"visionos_stereo_screenshots failed to load session properties: %@", error);
+    return;
+  }
+  gTakeScreenshotStatus = kTakeScreenshotStatusScreenshotNextFrame;
+}
+
+void visionos_stereo_screenshots_streaming_did_stop() {
+  gStopping = true;
+}
+
 __attribute__((constructor)) static void SetupSignalHandler() {
   NSLog(@"visionos_stereo_screenshots starting!");
   static dispatch_queue_t signal_queue;
@@ -361,4 +388,5 @@ __attribute__((constructor)) static void SetupSignalHandler() {
     NSLog(@"visionos_stereo_screenshots: failed to load metal yuva pipeline state: %@", error);
     return;
   }
+  visionos_stereo_screenshots_initialize_streaming();
 }
