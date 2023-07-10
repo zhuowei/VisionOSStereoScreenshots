@@ -54,10 +54,9 @@ static NSDictionary<NSString*, id>* gSessionProperties;
 
 // pointer to the drawable
 static NSMutableDictionary<NSNumber*, NSMutableDictionary<NSString*, id>*>* gDrawableDictionaries;
-static struct visionos_stereo_screenshots_streaming_head_pose gLatchedHeadsetPose;
 
 static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements, uint64_t timestamp);
-static uint64_t GetTimestampForDrawable(cp_drawable_t drawable);
+// static uint64_t GetTimestampForDrawable(cp_drawable_t drawable);
 
 static id<MTLTexture> MakeOurTextureBasedOnTheirTexture(id<MTLDevice> device,
                                                         id<MTLTexture> originalTexture,
@@ -158,13 +157,28 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   cp_view_t leftView = cp_drawable_get_view(retval, 0);
   cp_view_t rightView = cp_drawable_get_view(retval, 1);
   memcpy(rightView, leftView, sizeof(*leftView));
-  rightView->transform = gRightEyeMatrix;
+
   cp_view_get_view_texture_map(rightView)->texture_index = 1;
 
   NSMutableDictionary* replacements = GetDrawableReplacements(retval);
   if (!replacements) {
     return retval;
   }
+
+  // Thanks @ShinyQuagsire - set eye position instead of world position
+  float heightOff = -1.5;
+  struct visionos_stereo_screenshots_streaming_head_pose headsetPose =
+      visionos_stereo_screenshots_streaming_get_head_pose();
+  // Based on RCPMatrixMakeTranslationRotation
+  simd_float4x4 eyePositionTransform =
+      simd_matrix4x4(simd_quaternion(headsetPose.rotation[0], headsetPose.rotation[1],
+                                     headsetPose.rotation[2], headsetPose.rotation[3]));
+  eyePositionTransform.columns[3] = simd_make_float4(
+      headsetPose.position[0], headsetPose.position[1] + heightOff, headsetPose.position[2], 1);
+  leftView->transform = eyePositionTransform;
+  rightView->transform = simd_mul(eyePositionTransform, gRightEyeMatrix);
+  replacements[@"Timestamp"] = [NSNumber numberWithUnsignedLongLong:headsetPose.targetTimestamp];
+
   struct visionos_stereo_screenshots_streaming_fov_both fov =
       visionos_stereo_screenshots_streaming_get_fov();
   leftView->tangents = simd_make_float4(tanf(-fov.left.fovAngleLeft), tanf(fov.left.fovAngleRight),
@@ -172,7 +186,6 @@ static cp_drawable_t hook_cp_frame_query_drawable(cp_frame_t frame) {
   rightView->tangents =
       simd_make_float4(tanf(-fov.right.fovAngleLeft), tanf(fov.right.fovAngleRight),
                        tanf(fov.right.fovAngleTop), tanf(-fov.right.fovAngleBottom));
-  gLatchedHeadsetPose = visionos_stereo_screenshots_streaming_get_head_pose();
   return retval;
 }
 
@@ -228,7 +241,7 @@ static void hook_cp_drawable_encode_present(cp_drawable_t drawable,
             dispatchThreads:MTLSizeMake(combinedColorTexture.width, combinedColorTexture.height, 1)
       threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
   [computeCommandEncoder endEncoding];
-  uint64_t timestamp = GetTimestampForDrawable(drawable);
+  uint64_t timestamp = ((NSNumber*)replacements[@"Timestamp"]).unsignedLongLongValue;
   [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
     DumpScreenshot(replacements, timestamp);
   }];
@@ -318,6 +331,8 @@ static void DumpScreenshot(NSMutableDictionary<NSString*, id>* replacements, uin
                                            timestamp);
 }
 
+#if 0
+
 extern simd_float4x4 cp_drawable_get_simd_pose(cp_drawable_t drawable);
 extern simd_float4x4 RCPMatrixMakeTranslationRotation(simd_float4 position, simd_float4 rotation);
 
@@ -374,6 +389,7 @@ static void hook_RSSimulatedHeadset_setHMDPose(RSSimulatedHeadset* self, SEL sel
 }
 
 static bool hook_RSSimulatedHeadset_headlocked(RSSimulatedHeadset* self, SEL sel) { return false; }
+#endif
 
 #if 0
 void RERenderFrameSettingsSetTotalTime(void* re, float time);
@@ -449,6 +465,7 @@ __attribute__((constructor)) static void SetupSignalHandler() {
     NSLog(@"visionos_stereo_screenshots: failed to load metal yuva pipeline state: %@", error);
     return;
   }
+#if 0
   {
     Class cls = NSClassFromString(@"RSSimulatedHeadset");
     Method method = class_getInstanceMethod(cls, @selector(setHMDPose:));
@@ -460,6 +477,7 @@ __attribute__((constructor)) static void SetupSignalHandler() {
     Method method = class_getInstanceMethod(cls, @selector(headlocked));
     method_setImplementation(method, (IMP)hook_RSSimulatedHeadset_headlocked);
   }
+#endif
 #if 0
   {
     Class cls = NSClassFromString(@"RSFrameDescription");

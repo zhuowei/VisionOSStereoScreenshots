@@ -70,9 +70,6 @@ void SendVSync() {}
 void RequestIDR() { gNextFrameIDR = true; }
 static std::mutex gDeviceMotionMutex;
 
-static FfiDeviceMotion gDeviceMotion;
-static uint64_t gDeviceTargetTimestamp;
-
 static std::vector<std::pair<uint64_t, FfiDeviceMotion>> gDeviceMotions;
 
 void SetTracking(unsigned long long targetTimestampNs, float controllerPoseTimeOffsetS,
