@@ -1,0 +1,8 @@
+[submodule "third_party/alvr"]
+	path = third_party/alvr
+	url = https://github.com/zhuowei/ALVR.git
+	branch = xros_sim_server
+[submodule "third_party/x264"]
+	path = third_party/x264
+	url = https://code.videolan.org/videolan/x264.git
+	branch = master
