@@ -4,7 +4,7 @@ Take stereoscopic (3D) screenshots in the visionOS simulator.
 
 An example screenshot from the visionOS simulator in side-by-side stereo.
 
-Tested on macOS 14 beta 2 / Xcode 15 beta 2.
+Tested on macOS 14 / Xcode 15.1 beta 2 (visionOS Beta 4 SDK).
 
 ## Setup
 
