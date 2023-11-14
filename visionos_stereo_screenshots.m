@@ -129,24 +129,24 @@ static id<MTLTexture> hook_cp_drawable_get_depth_texture(cp_drawable_t drawable,
 
 DYLD_INTERPOSE(hook_cp_drawable_get_depth_texture, cp_drawable_get_depth_texture);
 
-size_t cp_layer_properties_get_view_count(cp_layer_renderer_properties_t properties);
+size_t cp_layer_renderer_properties_get_view_count(cp_layer_renderer_properties_t properties);
 
-static size_t hook_cp_layer_properties_get_view_count(cp_layer_renderer_properties_t properties) {
+static size_t hook_cp_layer_renderer_properties_get_view_count(cp_layer_renderer_properties_t properties) {
   return 2;
 }
 
-DYLD_INTERPOSE(hook_cp_layer_properties_get_view_count, cp_layer_properties_get_view_count);
+DYLD_INTERPOSE(hook_cp_layer_renderer_properties_get_view_count, cp_layer_renderer_properties_get_view_count);
 
-cp_layer_renderer_layout cp_layer_configuration_get_layout_private(
+cp_layer_renderer_layout cp_layer_renderer_configuration_get_layout(
     cp_layer_renderer_configuration_t configuration);
 
-static cp_layer_renderer_layout hook_cp_layer_configuration_get_layout_private(
+static cp_layer_renderer_layout hook_cp_layer_renderer_configuration_get_layout(
     cp_layer_renderer_configuration_t configuration) {
   return cp_layer_renderer_layout_dedicated;
 }
 
-DYLD_INTERPOSE(hook_cp_layer_configuration_get_layout_private,
-               cp_layer_configuration_get_layout_private);
+DYLD_INTERPOSE(hook_cp_layer_renderer_configuration_get_layout,
+               cp_layer_renderer_configuration_get_layout);
 
 static void DumpScreenshot() {
   NSLog(@"visionos_stereo_screenshot: DumpScreenshot");
